@@ -58,13 +58,16 @@ During local runs the service logs request lifecycle events (start → capsules 
 
 1. Fork or clone this repository into your GitHub account.
 2. In Render, click **New + → Blueprint** and connect the GitHub repo. Render will detect `render.yaml`.
-3. When prompted, set the environment variables: `OPENAI_API_KEY`, `PINECONE_API_KEY`, `PINECONE_INDEX`, `PINECONE_HOST`, `SERVICE_API_KEY`, `LOG_LEVEL` (optional), and `PORT` (optional—defaults to `8080`).
-4. Deploy the Blueprint. Render will run `npm ci && npm run build` and start the app with `node dist/server.js`.
-5. After deploy, verify the health check:
+codex/implement-user-capsule-upsert-service-98lul6
+3. Before clicking **Deploy**, open the service’s **Environment** tab in Render and add values for each required variable: `OPENAI_API_KEY`, `PINECONE_API_KEY`, `PINECONE_INDEX`, `PINECONE_HOST`, `SERVICE_API_KEY`, plus optional `LOG_LEVEL` and `PORT` (defaults to `8080`). The Blueprint already defines the keys so you only need to fill in the values.
+4. After the environment variables are saved, trigger the deploy. Render will run `npm ci && npm run build` and start the app with `node dist/server.js`.
+5. If a deploy starts before the secrets are saved, it will fail fast with an error such as `Environment variable OPENAI_API_KEY is required`. Simply add the missing values and click **Manual Deploy → Clear cache & deploy** to retry.
+6. After a successful deploy, verify the health check:
    ```bash
    curl https://<your-render-service>.onrender.com/health
    ```
-6. Test the upsert endpoint:
+7. Test the upsert endpoint:
+
    ```bash
    curl -X POST "https://<your-render-service>.onrender.com/v1/users/upsert" \
      -H "Authorization: Bearer $SERVICE_API_KEY" \
