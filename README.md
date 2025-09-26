@@ -1,6 +1,6 @@
 # User Capsule Upsert Service
 
-This Fastify service receives Bubble user profile data, generates domain and task capsules with OpenAI, embeds each capsule with `text-embedding-3-large`, and upserts both vectors into Pinecone. Bubble receives only the capsule texts, vector identifiers, and metadata required to display and audit updates.
+This Fastify service receives Bubble user profile data, generates domain and task capsules with OpenAI, embeds each capsule with `text-embedding-3-large`, and upserts both vectors into Pinecone. It also supports manual Job capsule generation and a lightweight job → candidate scoring endpoint so operators can test roles such as OB-GYN labeling immediately. Bubble receives only the capsule texts, vector identifiers, and metadata required to display and audit updates.
 
 ---
 
@@ -176,6 +176,48 @@ curl -X POST "$SERVICE_URL/v1/users/upsert" \
 
 Successful responses include `embedding_model: "text-embedding-3-large"`, `dimension: 3072`, capsule texts, character counts, and ISO timestamp. Raw embedding vectors are never returned.
 
+### `POST /v1/jobs/upsert`
+
+Generates the Job Domain and Job Task capsules from structured job details, embeds each with `text-embedding-3-large`, and upserts `job_<jobId>::domain` / `job_<jobId>::task` into Pinecone.
+
+```bash
+curl -X POST "$SERVICE_URL/v1/jobs/upsert" \
+  -H "Authorization: Bearer $SERVICE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id":"j_obgyn",
+    "title":"OBGYN Doctors - LLM Training",
+    "fields":{
+      "Instructions":"Review obstetrics and gynecology question-answer data for accuracy.",
+      "Dataset_Description":"Prompt-response transcripts and rubric scores for obstetrics scenarios.",
+      "Data_SubjectMatter":"OBGYN medicine, maternal-fetal medicine, gynecologic oncology",
+      "LabelTypes":["evaluation","prompt+response"],
+      "Requirements_Additional":"Board-certified OB-GYN with 5+ years clinical experience"
+    }
+  }'
+```
+
+The response mirrors the user endpoint (`status: "ok"`, capsule texts, vector IDs, character counts, and `updated_at`). Reposting with the same `job_id` overwrites both vectors.
+
+### `POST /v1/match/score_users_for_job`
+
+Scores a single job against a fixed candidate list using manual weights.
+
+```bash
+curl -X POST "$SERVICE_URL/v1/match/score_users_for_job" \
+  -H "Authorization: Bearer $SERVICE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id":"j_obgyn",
+    "candidate_user_ids":["u_1","u_2","u_3"],
+    "w_domain":1.0,
+    "w_task":0.0,
+    "threshold":0.82
+  }'
+```
+
+The response returns sorted scores plus `count_gte_threshold` when a threshold is provided. Skip the task weight (set `w_task` to `0`) for domain-only screening scenarios like medical specialist checks.
+
 ---
 
 ## Postman collection
@@ -200,6 +242,12 @@ A minimal collection is available at [`postman/collection.json`](postman/collect
    - `task.capsule_text` → **Profile Task Capsule** (text)
    - `updated_at` → **Capsules Last Modified** (date)
 
+### Manual job workflow in Bubble
+
+1. Add a Bubble action that calls `POST /v1/jobs/upsert` with the job metadata (title, instructions, subject matter, label types, etc.).
+2. Persist the returned `domain.capsule_text`, `task.capsule_text`, and `updated_at` as **Job Domain Capsule**, **Job Task Capsule**, and **Job Capsules Last Modified** for audit history.
+3. When vetting applicants for a job, call `POST /v1/match/score_users_for_job` with the `job_id`, shortlisted `candidate_user_ids`, and manual weights (`w_domain`, `w_task`). Display the sorted scores (and optional threshold counts) to recruiters inside Bubble.
+
 > Do **not** store Pinecone vectors in Bubble—the service writes them directly to Pinecone.
 
 See [`docs/bubble-and-deployment.md`](docs/bubble-and-deployment.md) for the exact Bubble field names and the live Render service reference.
@@ -213,6 +261,8 @@ See [`docs/bubble-and-deployment.md`](docs/bubble-and-deployment.md) for the exa
 - [ ] Render environment configured with `OPENAI_API_KEY`, `PINECONE_API_KEY`, `PINECONE_INDEX`, `PINECONE_HOST`, `SERVICE_API_KEY`, and optional `LOG_LEVEL`/`PORT`.
 - [ ] Render deployment succeeds via `render.yaml`; `/health` returns `{"status":"ok"}`.
 - [ ] `POST /v1/users/upsert` returns `status: "ok"`, capsule texts, and vector IDs.
+- [ ] `POST /v1/jobs/upsert` returns `status: "ok"`, job capsule texts, and vector IDs (`job_<id>::domain|task`).
+- [ ] `POST /v1/match/score_users_for_job` returns sorted scores for the provided candidate list.
 - [ ] Pinecone console shows both vectors per user: `usr_<userId>::domain` and `usr_<userId>::task`.
 - [ ] Bubble stores capsule texts and timestamps only.
 

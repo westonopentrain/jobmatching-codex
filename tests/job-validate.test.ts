@@ -1,0 +1,61 @@
+import { describe, expect, it } from 'vitest';
+
+import { validateJobDomainCapsule, validateJobTaskCapsule } from '../src/services/job-validate';
+import { NormalizedJobPosting } from '../src/utils/types';
+
+const baseJob: NormalizedJobPosting = {
+  jobId: 'j_test',
+  title: 'OBGYN Doctors - LLM Training',
+  instructions: 'Review obstetrics and gynecology medical data.',
+  workloadDesc: '20 hours per week',
+  datasetDescription: 'Clinical question and answer dataset for obstetrics and gynecology.',
+  dataSubjectMatter: 'OBGYN medicine, maternal-fetal medicine, gynecologic oncology',
+  dataType: 'text',
+  labelTypes: ['evaluation', 'prompt+response'],
+  requirementsAdditional: 'Must be licensed OB-GYN with 5+ years experience',
+  availableLanguages: ['English'],
+  availableCountries: ['US'],
+  expertiseLevel: 'senior',
+  timeRequirement: '15-20 hours/wk',
+  projectType: 'ongoing',
+  labelSoftware: 'Label Studio',
+  additionalSkills: ['Clinical terminology expertise'],
+  promptText:
+    'Title: OBGYN Doctors - LLM Training\nInstructions: Review obstetrics and gynecology medical data.\nDataset_Description: Clinical question and answer dataset for obstetrics and gynecology.\nData_SubjectMatter: OBGYN medicine, maternal-fetal medicine, gynecologic oncology\nData_Type: text\nLabelTypes: evaluation; prompt+response\nRequirements_Additional: Must be licensed OB-GYN with 5+ years experience\nAvailableLanguages: English\nAvailableCountries: US\nExpertiseLevel: senior\nTimeRequirement: 15-20 hours/wk\nProjectType: ongoing\nLabelSoftware: Label Studio\nAdditionalSkills: Clinical terminology expertise',
+  sourceText:
+    'OBGYN Doctors - LLM Training\nReview obstetrics and gynecology medical data.\nClinical question and answer dataset for obstetrics and gynecology.\nOBGYN medicine, maternal-fetal medicine, gynecologic oncology\ntext\nevaluation; prompt+response\nMust be licensed OB-GYN with 5+ years experience\nEnglish\nUS\nsenior\n15-20 hours/wk\nongoing\nLabel Studio\nClinical terminology expertise',
+};
+
+describe('validateJobDomainCapsule', () => {
+  it('flags AI terms for rewrite', () => {
+    const capsule = `OB-GYN medicine coverage including obstetrics, gynecology, maternal-fetal medicine, gynecologic oncology, clinical question review, evaluation rubric expertise, prompt+response comprehension, English-language terminology focus, clinical terminology expertise, Label Studio workflows.
+Keywords: OB-GYN, obstetrics, gynecology, maternal-fetal medicine, gynecologic oncology, clinical question, evaluation, prompt+response, clinical terminology expertise, Label Studio`;
+
+    const result = validateJobDomainCapsule(capsule, baseJob);
+    expect(result.needsDomainReprompt).toBe(true);
+  });
+
+  it('throws when keywords missing from job text', () => {
+    const capsule = `Obstetrics and gynecology coverage referencing prenatal diagnostics and gynecologic oncology, maternal-fetal medicine, reproductive endocrinology, pelvic floor disorders, perinatal genetics, fetal ultrasound, postpartum care, neonatal intensive care collaboration, obstetric anesthesia considerations.
+Keywords: obstetrics, gynecology, prenatal diagnostics, gynecologic oncology, maternal-fetal medicine, reproductive endocrinology, pelvic floor disorders, perinatal genetics, fetal ultrasound, postpartum care, neonatal intensive care, fictitious keyword`;
+
+    expect(() => validateJobDomainCapsule(capsule, baseJob)).toThrowError(/keywords must appear/i);
+  });
+});
+
+describe('validateJobTaskCapsule', () => {
+  it('flags non-AI duties for rewrite', () => {
+    const capsule = `Physicians deliver patient care while also preparing evaluation scoring for obstetrics prompt+response transcripts, reviewing clinical question text data, and verifying rubric adherence inside Label Studio projects. Responsibilities include clinical consultation, patient care follow-ups, and structured scoring of responses to gynecology prompts, maintaining accuracy thresholds and double-check workflows for OB-GYN reviewers working in English at the senior level.
+Keywords: obstetrics, gynecology, clinical question, prompt+response, evaluation, Label Studio, OB-GYN, English, senior, text`;
+
+    const result = validateJobTaskCapsule(capsule, baseJob);
+    expect(result.needsTaskReprompt).toBe(true);
+  });
+
+  it('throws when keyword count invalid', () => {
+    const capsule = `Experts assess obstetric prompt-response datasets, grade maternal health counseling outputs, review gynecologic oncology question answering, and evaluate rubric-driven scoring for obstetrics. They apply obstetric terminology taxonomies, ensure evidence-grounded rationales, and maintain calibration logs for long-form case narratives.
+Keywords: obstetric prompts, maternal health, gynecologic oncology, rubric-driven scoring, terminology taxonomies, evidence-grounded rationales`;
+
+    expect(() => validateJobTaskCapsule(capsule, baseJob)).toThrowError(/between 10 and 20/);
+  });
+});

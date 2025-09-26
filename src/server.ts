@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import { healthRoutes } from './api/health';
 import { userRoutes } from './api/users';
+import { jobRoutes } from './api/jobs';
+import { matchRoutes } from './api/match';
 import { loggerOptions } from './utils/logger';
 import { getEnv, getEnvNumber, requireEnv } from './utils/env';
 
@@ -11,6 +13,8 @@ export function buildServer() {
 
   app.register(healthRoutes);
   app.register(userRoutes);
+  app.register(jobRoutes);
+  app.register(matchRoutes);
 
   return app;
 }
