@@ -2,6 +2,8 @@
 
 Keeping Codex in sync with GitHub’s `main` branch prevents the “same files keep coming back” merge conflicts you were seeing. Follow the Codex steps before starting a new task and repeat the local routine if you also work from a personal machine.
 
+> **Shortcut:** Run `npm run sync:main` (or `npm run sync:main -- <feature-branch>`) inside the Codex terminal to fetch the latest commits, reset `main` to `origin/main`, and optionally create a fresh feature branch in one go. The script aborts if there are unstaged changes so you can stash or commit before syncing.
+
 ## Refresh the Codex workspace
 
 1. In the Codex UI, open the branch selector (upper-right) and choose **Manual sync…** or **Sync from remote**.

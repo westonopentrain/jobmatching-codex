@@ -9,7 +9,8 @@
     "dev": "tsx watch src/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "index:create": "ts-node scripts/create-index.ts"
+    "index:create": "ts-node scripts/create-index.ts",
+    "sync:main": "bash scripts/sync-main.sh"
   },
   "keywords": ["openai", "pinecone", "fastify"],
   "author": "",

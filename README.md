@@ -8,6 +8,8 @@ This Fastify service receives Bubble user profile data, generates domain and tas
 
 After merging a pull request, reset your local `main` branch to the latest GitHub state before starting new work. The step-by-step commands live in [`docs/git-workflow.md`](docs/git-workflow.md) and prevent Codex from reintroducing files that already exist on `main`.
 
+- **Quick option:** run `npm run sync:main` (optionally `npm run sync:main -- <feature-branch>`) to fetch from GitHub, reset `main` to `origin/main`, and—when provided—create a fresh feature branch in one command. The script refuses to run with uncommitted changes so you do not lose work by accident.
+
 ---
 
 ## Environment variables
