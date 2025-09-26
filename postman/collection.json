@@ -1,0 +1,55 @@
+{
+  "info": {
+    "name": "User Capsule Upsert Service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Upsert User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{serviceApiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"u_demo\",\n  \"resume_text\": \"Board-certified obstetrician-gynecologist ...\",\n  \"work_experience\": [\"OB Hospitalist ...\", \"Residency in OB-GYN ...\"],\n  \"education\": [\"MD ...\"],\n  \"labeling_experience\": [\"NER on clinical notes\"],\n  \"country\": \"US\",\n  \"languages\": [\"English\"]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/users/upsert",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "users", "upsert"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://your-render-service.onrender.com"
+    },
+    {
+      "key": "serviceApiKey",
+      "value": "replace-with-service-api-key"
+    }
+  ]
+}
