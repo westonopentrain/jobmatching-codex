@@ -3,13 +3,31 @@ import { NormalizedUserProfile, CapsulePair } from '../utils/types';
 import { joinLanguages, joinWithLineBreak } from '../utils/sanitize';
 import { withRetry } from '../utils/retry';
 import { AppError } from '../utils/errors';
-codex/implement-user-capsule-upsert-service-261aor
-import { requireEnv } from '../utils/env';
+odex/implement-user-capsule-upsert-service-1ryqf1
+import { getEnv } from '../utils/env';
+import { logger } from '../utils/logger';
 
 const CAPSULE_TEMPERATURE = 0.2;
+const DEFAULT_CAPSULE_MODEL = 'gpt-4o-mini';
+let capsuleModelWarningLogged = false;
 
 function resolveCapsuleModel(): string {
-  return requireEnv('OPENAI_CAPSULE_MODEL');
+  const override = getEnv('OPENAI_CAPSULE_MODEL');
+  if (override) {
+    return override;
+  }
+
+  if (!capsuleModelWarningLogged) {
+    logger.warn(
+      {
+        defaultModel: DEFAULT_CAPSULE_MODEL,
+      },
+      'OPENAI_CAPSULE_MODEL is not set; falling back to default model'
+    );
+    capsuleModelWarningLogged = true;
+  }
+
+  return DEFAULT_CAPSULE_MODEL;
 }
 
 
@@ -91,12 +109,14 @@ export function extractCapsuleTexts(raw: string): CapsulePair {
 export async function generateCapsules(profile: NormalizedUserProfile): Promise<CapsulePair> {
   const prompt = buildCapsulePrompt(profile);
   const client = getOpenAIClient();
-codex/implement-user-capsule-upsert-service-261aor
+codex/implement-user-capsule-upsert-service-1ryqf1
+
   const capsuleModel = resolveCapsuleModel();
 
   const completion = await withRetry(() =>
     client.chat.completions.create({
       model: capsuleModel,
+codex/implement-user-capsule-upsert-service-1ryqf1
 
       messages: [
         {
@@ -133,5 +153,5 @@ codex/implement-user-capsule-upsert-service-261aor
 
   return extractCapsuleTexts(content);
 }
-codex/implement-user-capsule-upsert-service-261aor
+codex/implement-user-capsule-upsert-service-1ryqf1
 
