@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateCapsules, CAPSULE_SYSTEM_MESSAGE, buildCapsulePrompt } from '../src/services/capsules';
 import { NormalizedUserProfile } from '../src/utils/types';
-import { NO_EVIDENCE_TASK_CAPSULE } from '../src/services/validate';
+import { NO_EVIDENCE_TASK_CAPSULE, validateTaskCapsule } from '../src/services/validate';
 import { extractLabelingEvidence } from '../src/utils/evidence';
 
 interface MockResponse {
@@ -51,6 +51,17 @@ function createProfile(overrides: Partial<NormalizedUserProfile>): NormalizedUse
     ...overrides,
   };
 }
+
+describe('validateTaskCapsule', () => {
+  it('allows QA sentences paired with annotation evidence', () => {
+    const taskParagraph =
+      'The candidate leads QA reviews of annotation workflows with senior annotators overseeing label quality.\nKeywords: annotation, qa';
+    const result = validateTaskCapsule(taskParagraph, new Set(['annotation', 'qa']));
+
+    expect(result.text).toBe(taskParagraph);
+    expect(result.violations).toEqual([]);
+  });
+});
 
 describe('capsule prompt', () => {
   it('includes strict rules and evidence list for downstream generation', () => {

@@ -72,11 +72,29 @@ function containsBlocklistTerm(body: string): string | undefined {
     }
 
     if (term === 'qa') {
-      const allowed = /(label|annotation)\s+qa/i.test(body);
-      if (allowed) {
-        continue;
+      const sentences = body
+        .split(/[\.?!\n\r]+/)
+        .map((sentence) => sentence.trim())
+        .filter((sentence) => sentence.length > 0);
+      const allowedWordsRegex = /\b(annotation|annotations|annotator|annotators|labeling|labelling|labelers?|labelled|labeled|label)\b/i;
+      let shouldFlag = false;
+
+      for (const sentence of sentences) {
+        if (!/\bqa\b/i.test(sentence)) {
+          continue;
+        }
+
+        if (!allowedWordsRegex.test(sentence)) {
+          shouldFlag = true;
+          break;
+        }
       }
-      return term;
+
+      if (shouldFlag) {
+        return term;
+      }
+
+      continue;
     }
 
     if (term === 'data cleaning') {
