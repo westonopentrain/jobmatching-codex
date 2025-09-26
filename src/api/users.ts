@@ -21,6 +21,29 @@ const requestSchema = z.object({
 
 type RequestBody = z.infer<typeof requestSchema>;
 
+function applyAliases(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object') {
+    return payload;
+  }
+
+  const record = { ...(payload as Record<string, unknown>) };
+
+  if (record.label_experience !== undefined && record.labeling_experience === undefined) {
+    record.labeling_experience = record.label_experience;
+  }
+
+  if (record.language !== undefined && record.languages === undefined) {
+    const value = record.language;
+    if (typeof value === 'string') {
+      record.languages = [value];
+    } else if (Array.isArray(value)) {
+      record.languages = value;
+    }
+  }
+
+  return record;
+}
+
 function ensureAuthorized(authorization: string | undefined, serviceKey: string): void {
   if (!authorization || !authorization.startsWith('Bearer ')) {
     throw new AppError({
@@ -65,7 +88,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       ensureAuthorized(request.headers.authorization, serviceApiKey);
 
-      const parsed = requestSchema.safeParse(request.body);
+      const bodyWithAliases = applyAliases(request.body);
+      const parsed = requestSchema.safeParse(bodyWithAliases);
       if (!parsed.success) {
         throw new AppError({
           code: 'VALIDATION_ERROR',
