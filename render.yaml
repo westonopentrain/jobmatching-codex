@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: user-capsule-upsert-service
+    env: node
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_INDEX
+        sync: false
+      - key: PINECONE_HOST
+        sync: false
+      - key: SERVICE_API_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: info
+      - key: PORT
+        value: "8080"

@@ -1,0 +1,33 @@
+{
+  "name": "jobmatching-codex",
+  "version": "1.0.0",
+  "description": "User capsule upsert service",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "index:create": "ts-node scripts/create-index.ts"
+  },
+  "keywords": ["openai", "pinecone", "fastify"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@pinecone-database/pinecone": "^6.1.2",
+    "dotenv": "^17.2.2",
+    "fastify": "^5.6.1",
+    "openai": "^5.23.0",
+    "pino": "^9.11.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsconfig-paths": "^4.2.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
