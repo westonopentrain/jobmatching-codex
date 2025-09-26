@@ -2,6 +2,8 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { AppError, toErrorResponse } from '../utils/errors';
 import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText } from '../utils/sanitize';
+codex/implement-user-capsule-upsert-service-1ryqf1
+
 import { NormalizedUserProfile } from '../utils/types';
 import { generateCapsules } from '../services/capsules';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
