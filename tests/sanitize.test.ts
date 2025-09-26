@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+codex/implement-user-capsule-upsert-service-e29ilo
 import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText } from '../src/utils/sanitize';
 
 describe('sanitize utilities', () => {
@@ -6,6 +7,7 @@ describe('sanitize utilities', () => {
     const longText = 'a'.repeat(20_000);
     const truncated = truncateResumeText(longText);
     expect(truncated).toBe(longText);
+
   });
 
   it('strips obvious PII from structured arrays', () => {
