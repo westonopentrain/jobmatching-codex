@@ -105,26 +105,29 @@ export function normalizeJobRequest(request: UpsertJobRequest): NormalizedJobPos
   const promptText = formatPairsForPrompt(pairs);
   const sourceText = pairs.map(([, value]) => value).join('\n');
 
-  return {
+  const normalized: NormalizedJobPosting = {
     jobId: request.job_id,
-    title,
-    instructions,
-    workloadDesc,
-    datasetDescription,
-    dataSubjectMatter,
-    dataType,
     labelTypes,
-    requirementsAdditional,
     availableLanguages,
     availableCountries,
-    expertiseLevel,
-    timeRequirement,
-    projectType,
-    labelSoftware,
     additionalSkills,
     promptText,
     sourceText,
   };
+
+  if (title !== undefined) normalized.title = title;
+  if (instructions !== undefined) normalized.instructions = instructions;
+  if (workloadDesc !== undefined) normalized.workloadDesc = workloadDesc;
+  if (datasetDescription !== undefined) normalized.datasetDescription = datasetDescription;
+  if (dataSubjectMatter !== undefined) normalized.dataSubjectMatter = dataSubjectMatter;
+  if (dataType !== undefined) normalized.dataType = dataType;
+  if (requirementsAdditional !== undefined) normalized.requirementsAdditional = requirementsAdditional;
+  if (expertiseLevel !== undefined) normalized.expertiseLevel = expertiseLevel;
+  if (timeRequirement !== undefined) normalized.timeRequirement = timeRequirement;
+  if (projectType !== undefined) normalized.projectType = projectType;
+  if (labelSoftware !== undefined) normalized.labelSoftware = labelSoftware;
+
+  return normalized;
 }
 
 async function requestCapsules(

@@ -75,7 +75,7 @@ export async function fetchVectors(ids: string[]): Promise<Record<string, Fetche
   }
 
   const index = getIndex();
-  const response = await withRetry(() => index.fetch({ ids, includeValues: true, includeMetadata: true })).catch((error) => {
+  const response = await withRetry(() => index.fetch(ids)).catch((error) => {
     if (error instanceof AppError) {
       throw error;
     }
@@ -91,7 +91,11 @@ export async function fetchVectors(ids: string[]): Promise<Record<string, Fetche
   const result: Record<string, FetchedVector> = {};
   for (const [key, record] of Object.entries(records)) {
     if (record && Array.isArray(record.values)) {
-      result[key] = { id: key, values: record.values, metadata: record.metadata };
+      const entry: FetchedVector = { id: key, values: record.values };
+      if (record.metadata !== undefined) {
+        entry.metadata = record.metadata;
+      }
+      result[key] = entry;
     }
   }
   return result;
@@ -105,14 +109,17 @@ interface QueryOptions {
 
 export async function queryByVector(options: QueryOptions): Promise<QueryMatch[]> {
   const index = getIndex();
-  const response = await withRetry(() =>
-    index.query({
-      vector: options.values,
-      topK: options.topK,
-      filter: options.filter,
-      includeMetadata: true,
-    })
-  ).catch((error) => {
+  const queryRequest: Parameters<Index<VectorMetadata>['query']>[0] = {
+    vector: options.values,
+    topK: options.topK,
+    includeMetadata: true,
+  };
+
+  if (options.filter !== undefined) {
+    queryRequest.filter = options.filter;
+  }
+
+  const response = await withRetry(() => index.query(queryRequest)).catch((error) => {
     if (error instanceof AppError) {
       throw error;
     }
@@ -124,9 +131,16 @@ export async function queryByVector(options: QueryOptions): Promise<QueryMatch[]
     });
   });
 
-  return (response.matches ?? []).map((match) => ({
-    id: match.id,
-    score: match.score ?? 0,
-    metadata: match.metadata ?? undefined,
-  }));
+  return (response.matches ?? []).map((match) => {
+    const mapped: QueryMatch = {
+      id: match.id,
+      score: match.score ?? 0,
+    };
+
+    if (match.metadata !== undefined) {
+      mapped.metadata = match.metadata as VectorMetadata;
+    }
+
+    return mapped;
+  });
 }
