@@ -47,7 +47,12 @@ function extractKeywords(taskText: string): string[] {
   if (!match) {
     return [];
   }
-  return match[1]
+  const keywordText = match[1] ?? '';
+  if (keywordText.trim().length === 0) {
+    return [];
+  }
+
+  return keywordText
     .split(',')
     .map((token) => token.trim())
     .filter((token) => token.length > 0);
