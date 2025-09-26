@@ -18,6 +18,7 @@
     "node": ">=20.18.0",
     "npm": ">=10.0.0"
   },
+codex/implement-user-capsule-upsert-service-261aor
 
   "dependencies": {
     "@pinecone-database/pinecone": "^6.1.2",

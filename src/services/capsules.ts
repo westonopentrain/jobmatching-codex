@@ -3,9 +3,15 @@ import { NormalizedUserProfile, CapsulePair } from '../utils/types';
 import { joinLanguages, joinWithLineBreak } from '../utils/sanitize';
 import { withRetry } from '../utils/retry';
 import { AppError } from '../utils/errors';
+codex/implement-user-capsule-upsert-service-261aor
+import { requireEnv } from '../utils/env';
 
-const CAPSULE_MODEL = process.env.OPENAI_CAPSULE_MODEL ?? 'gpt-4o-mini';
 const CAPSULE_TEMPERATURE = 0.2;
+
+function resolveCapsuleModel(): string {
+  return requireEnv('OPENAI_CAPSULE_MODEL');
+}
+
 
 export function buildCapsulePrompt(profile: NormalizedUserProfile): string {
   const workExperience = joinWithLineBreak(profile.workExperience);
@@ -85,10 +91,13 @@ export function extractCapsuleTexts(raw: string): CapsulePair {
 export async function generateCapsules(profile: NormalizedUserProfile): Promise<CapsulePair> {
   const prompt = buildCapsulePrompt(profile);
   const client = getOpenAIClient();
+codex/implement-user-capsule-upsert-service-261aor
+  const capsuleModel = resolveCapsuleModel();
 
   const completion = await withRetry(() =>
     client.chat.completions.create({
-      model: CAPSULE_MODEL,
+      model: capsuleModel,
+
       messages: [
         {
           role: 'system',
@@ -124,5 +133,5 @@ export async function generateCapsules(profile: NormalizedUserProfile): Promise<
 
   return extractCapsuleTexts(content);
 }
+codex/implement-user-capsule-upsert-service-261aor
 
-export const capsuleModel = CAPSULE_MODEL;

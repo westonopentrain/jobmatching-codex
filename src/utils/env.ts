@@ -4,8 +4,13 @@ dotenv.config();
 
 export function getEnv(name: string): string | undefined {
   const value = process.env[name];
-  if (typeof value === 'string' && value.length > 0) {
-    return value;
+ codex/implement-user-capsule-upsert-service-261aor
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+
   }
   return undefined;
 }
