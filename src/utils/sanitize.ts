@@ -1,4 +1,5 @@
-const RESUME_CHAR_LIMIT = 12_000;
+codex/implement-user-capsule-upsert-service-e29ilo
+
 const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_REGEX = /(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4})/g;
 
@@ -7,10 +8,9 @@ function stripBasicPII(value: string): string {
 }
 
 export function truncateResumeText(text: string): string {
-  if (text.length <= RESUME_CHAR_LIMIT) {
-    return text;
-  }
-  return text.slice(0, RESUME_CHAR_LIMIT);
+codex/implement-user-capsule-upsert-service-e29ilo
+  return text;
+
 }
 
 export function sanitizeStringArray(values?: string[]): string[] {
@@ -44,7 +44,5 @@ export function joinLanguages(languages: string[]): string {
   }
   return languages.join(', ');
 }
+codex/implement-user-capsule-upsert-service-e29ilo
 
-export function getResumeCharLimit(): number {
-  return RESUME_CHAR_LIMIT;
-}

@@ -1,12 +1,9 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { AppError, toErrorResponse } from '../utils/errors';
-import {
-  sanitizeOptionalString,
-  sanitizeStringArray,
-  truncateResumeText,
-  getResumeCharLimit,
-} from '../utils/sanitize';
+codex/implement-user-capsule-upsert-service-e29ilo
+import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText } from '../utils/sanitize';
+
 import { NormalizedUserProfile } from '../utils/types';
 import { generateCapsules } from '../services/capsules';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
@@ -84,7 +81,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         throw new AppError({
           code: 'VALIDATION_ERROR',
           statusCode: 400,
-          message: 'resume_text must not be empty after truncation',
+codex/implement-user-capsule-upsert-service-e29ilo
+          message: 'resume_text must not be empty',
+
         });
       }
 
@@ -147,7 +146,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           domainChars: capsules.domain.text.length,
           taskChars: capsules.task.text.length,
           resumeChars: normalized.resumeText.length,
-          resumeLimit: getResumeCharLimit(),
+codex/implement-user-capsule-upsert-service-e29ilo
+
           elapsedMs: elapsedRounded,
         },
         'User capsule upsert completed'

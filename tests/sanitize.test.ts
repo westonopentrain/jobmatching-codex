@@ -1,17 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import {
-  getResumeCharLimit,
-  sanitizeOptionalString,
-  sanitizeStringArray,
-  truncateResumeText,
-} from '../src/utils/sanitize';
+codex/implement-user-capsule-upsert-service-e29ilo
+import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText } from '../src/utils/sanitize';
 
 describe('sanitize utilities', () => {
-  it('truncates resume text to the configured limit', () => {
-    const limit = getResumeCharLimit();
-    const longText = 'a'.repeat(limit + 100);
+  it('returns resume text unchanged regardless of length', () => {
+    const longText = 'a'.repeat(20_000);
     const truncated = truncateResumeText(longText);
-    expect(truncated.length).toBe(limit);
+    expect(truncated).toBe(longText);
+
   });
 
   it('strips obvious PII from structured arrays', () => {
