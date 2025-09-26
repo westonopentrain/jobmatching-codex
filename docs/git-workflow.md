@@ -1,5 +1,6 @@
 # Git workflow after merging PRs
 
+odex/implement-user-capsule-upsert-service-261aor
 Keeping Codex in sync with GitHub’s `main` branch prevents the “same files keep coming back” merge conflicts you were seeing. Follow the Codex steps before starting a new task and repeat the local routine if you also work from a personal machine.
 
 ## Refresh the Codex workspace
@@ -18,6 +19,7 @@ Keeping Codex in sync with GitHub’s `main` branch prevents the “same files k
 Completing this sync step before each task ensures every PR starts from the current GitHub history.
 
 ## Local machine routine
+
 
 1. **Sync the local `main` branch**
    ```bash
@@ -46,5 +48,7 @@ Completing this sync step before each task ensures every PR starts from the curr
    ```
    If Codex creates the branch for you, double-check in the GitHub UI that it is based on the newest `main`.
 
+codex/implement-user-capsule-upsert-service-261aor
 By repeating these routines you avoid add/add conflicts with files already merged into `main` and ensure follow-up PRs only contain new work.
+
 
