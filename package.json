@@ -9,7 +9,6 @@
     "dev": "tsx watch src/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-codex/implement-user-capsule-upsert-service-1ryqf1
     "index:create": "ts-node scripts/create-index.ts",
     "sync:main": "bash scripts/sync-main.sh"
 
@@ -21,7 +20,6 @@ codex/implement-user-capsule-upsert-service-1ryqf1
     "node": ">=20.18.0",
     "npm": ">=10.0.0"
   },
-codex/implement-user-capsule-upsert-service-1ryqf1
 
   "dependencies": {
     "@pinecone-database/pinecone": "^6.1.2",

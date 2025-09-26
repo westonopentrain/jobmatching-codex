@@ -3,7 +3,6 @@ import { NormalizedUserProfile, CapsulePair } from '../utils/types';
 import { joinLanguages, joinWithLineBreak } from '../utils/sanitize';
 import { withRetry } from '../utils/retry';
 import { AppError } from '../utils/errors';
-odex/implement-user-capsule-upsert-service-1ryqf1
 import { getEnv } from '../utils/env';
 import { logger } from '../utils/logger';
 
@@ -109,15 +108,12 @@ export function extractCapsuleTexts(raw: string): CapsulePair {
 export async function generateCapsules(profile: NormalizedUserProfile): Promise<CapsulePair> {
   const prompt = buildCapsulePrompt(profile);
   const client = getOpenAIClient();
-codex/implement-user-capsule-upsert-service-1ryqf1
 
   const capsuleModel = resolveCapsuleModel();
 
   const completion = await withRetry(() =>
     client.chat.completions.create({
       model: capsuleModel,
-codex/implement-user-capsule-upsert-service-1ryqf1
-
       messages: [
         {
           role: 'system',
@@ -153,5 +149,4 @@ codex/implement-user-capsule-upsert-service-1ryqf1
 
   return extractCapsuleTexts(content);
 }
-codex/implement-user-capsule-upsert-service-1ryqf1
 

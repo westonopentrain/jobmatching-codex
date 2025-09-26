@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-codex/implement-user-capsule-upsert-service-1ryqf1
 
 import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText } from '../src/utils/sanitize';
 
@@ -8,7 +7,6 @@ describe('sanitize utilities', () => {
     const longText = 'a'.repeat(20_000);
     const truncated = truncateResumeText(longText);
     expect(truncated).toBe(longText);
-codex/implement-user-capsule-upsert-service-1ryqf1
 
   });
 

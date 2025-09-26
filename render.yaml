@@ -6,19 +6,16 @@ services:
     startCommand: node dist/server.js
     healthCheckPath: /health
     envVars:
-codex/implement-user-capsule-upsert-service-1ryqf1
 
       - key: NODE_VERSION
         value: "20.18.0"
       - key: NPM_CONFIG_PRODUCTION
         value: "false"
-codex/implement-user-capsule-upsert-service-1ryqf1
 
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_CAPSULE_MODEL
         sync: false
-odex/implement-user-capsule-upsert-service-1ryqf1
 
       - key: PINECONE_API_KEY
         sync: false
@@ -30,7 +27,6 @@ odex/implement-user-capsule-upsert-service-1ryqf1
         sync: false
       - key: LOG_LEVEL
         value: info
-codex/implement-user-capsule-upsert-service-1ryqf1
 
       - key: PORT
         value: "8080"
