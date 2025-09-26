@@ -6,7 +6,9 @@ services:
     startCommand: node dist/server.js
     healthCheckPath: /health
     envVars:
-codex/implement-user-capsule-upsert-service-e29ilo
+codex/implement-user-capsule-upsert-service-m0389b
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
 
       - key: OPENAI_API_KEY
         sync: false
@@ -20,7 +22,7 @@ codex/implement-user-capsule-upsert-service-e29ilo
         sync: false
       - key: LOG_LEVEL
         value: info
-codex/implement-user-capsule-upsert-service-e29ilo
+codex/implement-user-capsule-upsert-service-m0389b
 
       - key: PORT
         value: "8080"

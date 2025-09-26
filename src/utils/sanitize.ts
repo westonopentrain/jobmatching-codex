@@ -1,4 +1,4 @@
-codex/implement-user-capsule-upsert-service-e29ilo
+codex/implement-user-capsule-upsert-service-m0389b
 
 const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_REGEX = /(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4})/g;
@@ -8,7 +8,7 @@ function stripBasicPII(value: string): string {
 }
 
 export function truncateResumeText(text: string): string {
-codex/implement-user-capsule-upsert-service-e29ilo
+codex/implement-user-capsule-upsert-service-m0389b
   return text;
 
 }
@@ -44,5 +44,5 @@ export function joinLanguages(languages: string[]): string {
   }
   return languages.join(', ');
 }
-codex/implement-user-capsule-upsert-service-e29ilo
+codex/implement-user-capsule-upsert-service-m0389b
 
