@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: user-capsule-upsert-service
+    env: node
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8080"
