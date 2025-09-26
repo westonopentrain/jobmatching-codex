@@ -6,6 +6,7 @@ services:
     startCommand: node dist/server.js
     healthCheckPath: /health
     envVars:
+codex/implement-user-capsule-upsert-service-98lul6
       - key: OPENAI_API_KEY
         sync: false
       - key: PINECONE_API_KEY
@@ -18,5 +19,6 @@ services:
         sync: false
       - key: LOG_LEVEL
         value: info
+
       - key: PORT
         value: "8080"
