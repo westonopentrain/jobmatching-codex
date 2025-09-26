@@ -14,10 +14,12 @@
   "keywords": ["openai", "pinecone", "fastify"],
   "author": "",
   "license": "MIT",
+codex/implement-user-capsule-upsert-service-joqirf
   "engines": {
     "node": ">=20.18.0",
     "npm": ">=10.0.0"
   },
+
   "dependencies": {
     "@pinecone-database/pinecone": "^6.1.2",
     "dotenv": "^17.2.2",

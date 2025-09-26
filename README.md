@@ -4,11 +4,13 @@ This Fastify service receives Bubble user profile data, generates domain and tas
 
 ---
 
+codex/implement-user-capsule-upsert-service-joqirf
 ## Keeping your local branches in sync
 
 After merging a pull request, reset your local `main` branch to the latest GitHub state before starting new work. The step-by-step commands live in [`docs/git-workflow.md`](docs/git-workflow.md) and prevent Codex from reintroducing files that already exist on `main`.
 
 ---
+
 
 ## Environment variables
 
@@ -64,14 +66,18 @@ During local runs the service logs request lifecycle events (start → capsules 
 
 1. Fork or clone this repository into your GitHub account.
 2. In Render, click **New + → Blueprint** and connect the GitHub repo. Render will detect `render.yaml`.
+codex/implement-user-capsule-upsert-service-joqirf
 3. Before clicking **Deploy**, open the service’s **Environment** tab in Render and add values for each required variable: `OPENAI_API_KEY`, `PINECONE_API_KEY`, `PINECONE_INDEX`, `PINECONE_HOST`, `SERVICE_API_KEY`, plus optional `LOG_LEVEL` and `PORT` (defaults to `8080`). The Blueprint already defines the keys so you only need to fill in the values. It also pins `NODE_VERSION=20.18.0` and `NPM_CONFIG_PRODUCTION=false` so builds run with a modern Node runtime while still installing dev dependencies (TypeScript). If you create the service manually, set both keys under **Environment** before the first deploy.
 4. After the environment variables are saved, trigger the deploy. Render will run `npm ci && npm run build` and start the app with `node dist/server.js` using Node 20.
+
 5. If a deploy starts before the secrets are saved, it will fail fast with an error such as `Environment variable OPENAI_API_KEY is required`. Simply add the missing values and click **Manual Deploy → Clear cache & deploy** to retry.
 6. After a successful deploy, verify the health check:
    ```bash
    curl https://<your-render-service>.onrender.com/health
    ```
 7. Test the upsert endpoint:
+codex/implement-user-capsule-upsert-service-joqirf
+
    ```bash
    curl -X POST "https://<your-render-service>.onrender.com/v1/users/upsert" \
      -H "Authorization: Bearer $SERVICE_API_KEY" \
@@ -170,7 +176,9 @@ A minimal collection is available at [`postman/collection.json`](postman/collect
 3. Endpoint: `POST /v1/users/upsert`.
 4. Payload fields:
    - `user_id` = Current User’s unique ID.
+codex/implement-user-capsule-upsert-service-joqirf
    - `resume_text` = Current User’s resume text (full text is accepted; no server-side character limit).
+
    - Optional arrays (`work_experience`, `education`, `labeling_experience`, `languages`) formatted as text lists.
    - `country` as a plain string.
 5. Store the following response fields in Bubble:
@@ -180,7 +188,9 @@ A minimal collection is available at [`postman/collection.json`](postman/collect
 
 > Do **not** store Pinecone vectors in Bubble—the service writes them directly to Pinecone.
 
+codex/implement-user-capsule-upsert-service-joqirf
 See [`docs/bubble-and-deployment.md`](docs/bubble-and-deployment.md) for the exact Bubble field names and the live Render service reference.
+
 
 ---
 

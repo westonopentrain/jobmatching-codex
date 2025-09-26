@@ -6,10 +6,12 @@ services:
     startCommand: node dist/server.js
     healthCheckPath: /health
     envVars:
+codex/implement-user-capsule-upsert-service-joqirf
       - key: NODE_VERSION
         value: "20.18.0"
       - key: NPM_CONFIG_PRODUCTION
         value: "false"
+
       - key: OPENAI_API_KEY
         sync: false
       - key: PINECONE_API_KEY
@@ -22,5 +24,7 @@ services:
         sync: false
       - key: LOG_LEVEL
         value: info
+codex/implement-user-capsule-upsert-service-joqirf
+
       - key: PORT
         value: "8080"
