@@ -3,36 +3,14 @@ import { NormalizedUserProfile, CapsulePair } from '../utils/types';
 import { joinWithLineBreak } from '../utils/sanitize';
 import { withRetry } from '../utils/retry';
 import { AppError } from '../utils/errors';
-import { getEnv } from '../utils/env';
 import { logger } from '../utils/logger';
 import { extractLabelingEvidence, LabelingEvidenceResult } from '../utils/evidence';
-import { validateTaskCapsule } from './validate';
+import { validateDomainCapsule, validateTaskCapsule } from './validate';
+import { resolveCapsuleModel } from './openai-model';
 
 const CAPSULE_TEMPERATURE = 0.2;
-const DEFAULT_CAPSULE_MODEL = 'gpt-4o-mini';
 export const CAPSULE_SYSTEM_MESSAGE =
-  'You generate two capsules for vector search on a talent marketplace across ANY domain (e.g., medicine, software engineering, writing, finance, legal, design, manufacturing, logistics, education, etc.). Be PII-safe: do not include personal names or contact details. Refer to the person as “the candidate.”';
-let capsuleModelWarningLogged = false;
-
-function resolveCapsuleModel(): string {
-  const override = getEnv('OPENAI_CAPSULE_MODEL');
-  if (override) {
-    return override;
-  }
-
-  if (!capsuleModelWarningLogged) {
-    logger.warn(
-      {
-        defaultModel: DEFAULT_CAPSULE_MODEL,
-      },
-      'OPENAI_CAPSULE_MODEL is not set; falling back to default model'
-    );
-    capsuleModelWarningLogged = true;
-  }
-
-  return DEFAULT_CAPSULE_MODEL;
-}
-
+  'You generate two capsules for vector search on a talent marketplace. Capsules must be domain-agnostic (work for medicine, software, writing, finance, legal, etc.). Be PII-safe: do not include names or contact details. Refer to the person as "the candidate."';
 
 function buildEvidenceSource(profile: NormalizedUserProfile): string {
   const segments: string[] = [profile.resumeText];
@@ -79,32 +57,28 @@ export function buildCapsulePrompt(
 
   return `Write TWO capsules.
 
-STRICT RULES
-- Use ONLY facts that appear in SOURCE.
-- Do NOT invent credentials, employers, dates, tools, tasks, or platforms.
-- PII: Do NOT include names or direct identifiers; refer to “the candidate.”
-- Domain Capsule MUST NOT include AI/LLM labeling/evaluation/training terms or tools.
-- Task Capsule MUST obey EVIDENCE rules below.
+GLOBAL RULES
+- Use ONLY facts in SOURCE. Do NOT invent anything.
+- PII: Do NOT include names; use "the candidate."
+- Keep prose minimal and noun-dense. Avoid role narratives, responsibilities, methods, dates, employers, or soft skills.
 
-CAPSULES
+1) Profile Domain Capsule (strictly subject-matter; 40-120 words)
+   - Include ONLY domain/subject-matter nouns present in SOURCE (or standard synonyms of exact SOURCE terms).
+   - Examples of acceptable content: languages (including dialects), scientific fields, engineering disciplines, programming languages/frameworks, finance/legal domains, industry verticals, certifications/credentials, specialized procedures, standards, data types.
+   - EXCLUDE: roles/titles (e.g., instructor, manager, writer), verbs (taught, organized, led), responsibilities, pedagogy, employment history, years, company names, soft skills, tooling, AI/LLM terms.
+   - Style: compressed, telegraphic; one or two concise sentences or a single condensed line of noun phrases.
+   - End with: Keywords: <10-20 tokens that appear in this capsule AND in SOURCE>
 
-1) Profile Domain Capsule (120–200 words)
-   - Subject-matter expertise ONLY (ANY domain: clinical specialties, programming languages & frameworks, finance topics, legal practice areas, writing/editing domains, etc.), but only if present in SOURCE.
-   - Prefer concrete nouns (subdomains, procedures, frameworks, standards, data types, environments).
-   - Do NOT include AI/LLM annotation, labeling, evaluation, RLHF, tools, or QA terms here.
-   - End with: Keywords: <10–20 tokens that appear in this paragraph AND in SOURCE>
-
-2) Profile Task Capsule (AI/LLM data work ONLY; see EVIDENCE)
-   - If EVIDENCE list is NON-EMPTY:
-       * Write 120–200 words describing ONLY AI/LLM data-labeling/training/evaluation activities that explicitly appear in EVIDENCE/SOURCE (tasks, label types, modalities, tools/platforms, QA, RLHF/DPO/SFT).
-       * DO NOT include generic data duties (e.g., “data entry,” “documentation,” “EHR/workflow,” “research studies,” “Excel analysis,” “cohort analysis,” “analytics,” “QA” not specific to labeling). Exclude these unless they are explicitly described as AI/LLM labeling/evaluation/training in SOURCE.
-       * Domain nouns may be mentioned only if they co-occur with labeling terms in SOURCE (e.g., “medical NER,” “code annotation”). Otherwise omit domain nouns.
-       * End with: Keywords: <10–20 tokens that appear in this paragraph AND in EVIDENCE/SOURCE>
-   - If EVIDENCE list is EMPTY:
-       * Output EXACTLY this one-sentence paragraph:
-         "No AI/LLM data-labeling, model training, or evaluation experience was provided in the source."
-       * Then on the next line output EXACTLY:
-         "Keywords: none"
+2) Profile Task Capsule (AI/LLM data work ONLY; evidence-only; 0 or 120-200 words)
+   - If EVIDENCE is NON-EMPTY:
+       * Describe ONLY AI/LLM data labeling/training/evaluation activities present in EVIDENCE/SOURCE (tasks, label types, modalities, tools/platforms, QA, SFT/DPO/RLHF).
+       * Domain nouns may be mentioned only when they co-occur with labeling terms in SOURCE (e.g., "medical NER", "code annotation"). Otherwise omit domain nouns.
+       * EXCLUDE generic duties (data entry, documentation, EHR, research study, Excel analysis, admin, analytics) unless explicitly tied to AI/LLM labeling/evaluation/training in SOURCE.
+       * End with: Keywords: <10-20 tokens that appear in this capsule AND in EVIDENCE/SOURCE>
+   - If EVIDENCE is EMPTY:
+       * Output EXACTLY:
+         No AI/LLM data-labeling, model training, or evaluation experience was provided in the source.
+         Keywords: none
 
 SOURCE (verbatim):
 - Resume Text:
@@ -116,17 +90,16 @@ ${education}
 - Labeling/AI Experience:
 ${labelingExperience}
 - Languages/Country:
-${languages}
-${country}
+${languages}, ${country}
 
-EVIDENCE (use ONLY these tokens/phrases for the Task Capsule when non-empty; if empty, follow the empty rule):
+EVIDENCE (use ONLY these for the Task Capsule when non-empty; if empty, use the fixed line above):
 ${evidenceList}
 
 OUTPUT FORMAT:
-<Profile Domain Capsule paragraph>
+<Profile Domain Capsule>
 Keywords: ...
 
-<Profile Task Capsule paragraph OR the exact 'no experience' sentence>
+<Profile Task Capsule OR the fixed 'no experience' line>
 Keywords: ...`;
 }
 
@@ -220,6 +193,7 @@ export async function generateCapsules(profile: NormalizedUserProfile): Promise<
 
   const capsules = extractCapsuleTexts(content);
 
+  const domainValidation = await validateDomainCapsule(capsules.domain.text);
   const validation = validateTaskCapsule(capsules.task.text, evidenceSet);
   if (validation.violations.length > 0) {
     logger.warn(
@@ -233,8 +207,7 @@ export async function generateCapsules(profile: NormalizedUserProfile): Promise<
   }
 
   return {
-    domain: { text: capsules.domain.text },
+    domain: { text: domainValidation.revised },
     task: { text: validation.text },
   };
 }
-
