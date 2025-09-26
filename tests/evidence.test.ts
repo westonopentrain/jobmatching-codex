@@ -19,4 +19,23 @@ describe('extractLabelingEvidence', () => {
       expect.arrayContaining(['label studio', 'prompt writing', 'bounding box'])
     );
   });
+
+  it('captures expanded evidence terms across domains', () => {
+    const source =
+      'Conducted guideline QA and safety reviews for preference judgments using Label Studio Annotate; prepared code annotation and coreference resolution datasets.';
+    const result = extractLabelingEvidence(source);
+
+    expect(result.tokens).toEqual(
+      expect.arrayContaining(['coreference', 'annotation'])
+    );
+    expect(result.phrases).toEqual(
+      expect.arrayContaining([
+        'guideline qa',
+        'safety reviews',
+        'preference judgments',
+        'label studio',
+        'code annotation',
+      ])
+    );
+  });
 });

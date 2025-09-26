@@ -82,10 +82,12 @@ describe('capsule prompt', () => {
     const evidence = extractLabelingEvidence(evidenceSource);
     const prompt = buildCapsulePrompt(profile, evidence);
 
-    expect(prompt).toContain('STRICT RULES');
-    expect(prompt).toContain('CAPSULES');
-    expect(prompt).toContain('EVIDENCE (use ONLY these tokens/phrases');
+    expect(prompt).toContain('GLOBAL RULES');
+    expect(prompt).toContain('Profile Domain Capsule (strictly subject-matter; 40-120 words)');
+    expect(prompt).toContain('Profile Task Capsule (AI/LLM data work ONLY; evidence-only; 0 or 120-200 words)');
+    expect(prompt).toContain("EVIDENCE (use ONLY these for the Task Capsule when non-empty; if empty, use the fixed line above):");
     expect(prompt).toContain('prompt writing');
+    expect(prompt).toContain('No AI/LLM data-labeling, model training, or evaluation experience was provided in the source.');
   });
 });
 
@@ -106,7 +108,7 @@ describe('generateCapsules integration', () => {
         }),
         noun: 'maternal-fetal medicine',
         domainText:
-          'The candidate delivers comprehensive maternal-fetal medicine care, coordinating obstetric triage protocols and inpatient rounds across labor and delivery units. They integrate prenatal diagnostics, cesarean delivery planning, and postpartum recovery pathways while guiding multidisciplinary collaboration. Keywords: maternal-fetal medicine, obstetric triage, prenatal diagnostics, cesarean delivery, postpartum recovery',
+          'Obstetrics, maternal-fetal medicine, prenatal diagnostics, cesarean delivery planning, postpartum recovery pathways, neonatal care coordination, high-risk pregnancy management, fetal monitoring protocols, obstetric triage standards, perinatal imaging reviews.\nKeywords: obstetrics, maternal-fetal medicine, prenatal diagnostics, cesarean delivery planning, postpartum recovery pathways, neonatal care coordination, high-risk pregnancy management, fetal monitoring protocols, obstetric triage standards, perinatal imaging reviews',
       },
       {
         profile: createProfile({
@@ -117,7 +119,7 @@ describe('generateCapsules integration', () => {
         }),
         noun: 'TypeScript',
         domainText:
-          'The candidate architects scalable TypeScript services and React interfaces, optimizing API resilience, CI/CD automation, and distributed systems observability for high-volume deployments. Keywords: TypeScript, React, APIs, CI/CD, distributed systems',
+          'TypeScript services, React interfaces, API architecture, CI/CD automation, distributed systems observability, Node.js microservices, frontend frameworks, web performance optimization, design systems, cloud deployment pipelines.\nKeywords: TypeScript services, React interfaces, API architecture, CI/CD automation, distributed systems observability, Node.js microservices, frontend frameworks, web performance optimization, design systems, cloud deployment pipelines',
       },
       {
         profile: createProfile({
@@ -128,7 +130,7 @@ describe('generateCapsules integration', () => {
         }),
         noun: 'nonfiction',
         domainText:
-          'The candidate curates literary nonfiction programs, shaping cultural reporting, longform essays, and magazine feature pipelines while mentoring editors on narrative structure. Keywords: literary nonfiction, cultural reporting, longform essays, magazine features, narrative structure',
+          'Literary nonfiction, cultural reporting, longform essays, magazine features, narrative structure, editorial strategy, copyediting standards, fact-checking protocols, publication workflows, style guides.\nKeywords: literary nonfiction, cultural reporting, longform essays, magazine features, narrative structure, editorial strategy, copyediting standards, fact-checking protocols, publication workflows, style guides',
       },
       {
         profile: createProfile({
@@ -139,7 +141,7 @@ describe('generateCapsules integration', () => {
         }),
         noun: 'fixed-income',
         domainText:
-          'The candidate steers fixed-income portfolio strategies, structuring municipal bond ladders, credit analysis workflows, and duration hedging for institutional mandates. Keywords: fixed-income, municipal bonds, credit analysis, duration hedging, institutional mandates',
+          'Fixed-income strategy, municipal bonds, credit analysis, duration hedging, institutional mandates, portfolio optimization, risk management frameworks, derivatives evaluation, compliance standards, financial modeling.\nKeywords: Fixed-income strategy, municipal bonds, credit analysis, duration hedging, institutional mandates, portfolio optimization, risk management frameworks, derivatives evaluation, compliance standards, financial modeling',
       },
     ];
 
@@ -157,6 +159,8 @@ describe('generateCapsules integration', () => {
       expect(capsules.domain.text.toLowerCase()).toContain(noun.toLowerCase());
       expect(capsules.domain.text.toLowerCase()).not.toContain('annotation');
       expect(capsules.task.text).toBe(NO_EVIDENCE_TASK_CAPSULE);
+      expect(capsules.domain.text).toMatch(/Keywords:/);
+      expect(capsules.domain.text.split('\n')[0].length).toBeGreaterThan(0);
     }
   });
 
