@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { AppError, toErrorResponse } from '../utils/errors';
 import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText } from '../utils/sanitize';
+import { ensureAuthorized } from '../utils/auth';
 
 import { NormalizedUserProfile } from '../utils/types';
 import { generateCapsules } from '../services/capsules';
@@ -42,24 +43,6 @@ function applyAliases(payload: unknown): unknown {
   }
 
   return record;
-}
-
-function ensureAuthorized(authorization: string | undefined, serviceKey: string): void {
-  if (!authorization || !authorization.startsWith('Bearer ')) {
-    throw new AppError({
-      code: 'UNAUTHORIZED',
-      statusCode: 401,
-      message: 'Missing bearer token',
-    });
-  }
-  const token = authorization.slice('Bearer '.length).trim();
-  if (token !== serviceKey) {
-    throw new AppError({
-      code: 'UNAUTHORIZED',
-      statusCode: 401,
-      message: 'Invalid bearer token',
-    });
-  }
 }
 
 function normalizeRequest(body: RequestBody): NormalizedUserProfile {

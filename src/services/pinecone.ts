@@ -6,6 +6,18 @@ import { logger } from '../utils/logger';
 
 export type VectorMetadata = RecordMetadata;
 
+export interface FetchedVector {
+  id: string;
+  values: number[];
+  metadata?: VectorMetadata;
+}
+
+export interface QueryMatch {
+  id: string;
+  score: number;
+  metadata?: VectorMetadata;
+}
+
 let pineconeIndex: Index<VectorMetadata> | null = null;
 
 function createClient(): { client: Pinecone; host: string | undefined } {
@@ -55,4 +67,66 @@ export async function upsertVector(id: string, values: number[], metadata: Vecto
       details: { message: (error as Error).message, id },
     });
   });
+}
+
+export async function fetchVectors(ids: string[]): Promise<Record<string, FetchedVector>> {
+  if (ids.length === 0) {
+    return {};
+  }
+
+  const index = getIndex();
+  const response = await withRetry(() => index.fetch({ ids, includeValues: true, includeMetadata: true })).catch((error) => {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError({
+      code: 'PINECONE_FETCH_FAILURE',
+      statusCode: 502,
+      message: 'Failed to fetch vectors from Pinecone',
+      details: { message: (error as Error).message, ids },
+    });
+  });
+
+  const records = response.records ?? {};
+  const result: Record<string, FetchedVector> = {};
+  for (const [key, record] of Object.entries(records)) {
+    if (record && Array.isArray(record.values)) {
+      result[key] = { id: key, values: record.values, metadata: record.metadata };
+    }
+  }
+  return result;
+}
+
+interface QueryOptions {
+  values: number[];
+  topK: number;
+  filter?: Record<string, unknown>;
+}
+
+export async function queryByVector(options: QueryOptions): Promise<QueryMatch[]> {
+  const index = getIndex();
+  const response = await withRetry(() =>
+    index.query({
+      vector: options.values,
+      topK: options.topK,
+      filter: options.filter,
+      includeMetadata: true,
+    })
+  ).catch((error) => {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError({
+      code: 'PINECONE_QUERY_FAILURE',
+      statusCode: 502,
+      message: 'Failed to query Pinecone',
+      details: { message: (error as Error).message },
+    });
+  });
+
+  return (response.matches ?? []).map((match) => ({
+    id: match.id,
+    score: match.score ?? 0,
+    metadata: match.metadata ?? undefined,
+  }));
 }

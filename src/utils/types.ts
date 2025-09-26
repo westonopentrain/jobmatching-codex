@@ -29,6 +29,50 @@ export interface CapsulePair {
   task: Capsule;
 }
 
+export interface JobFields {
+  Instructions?: string;
+  Workload_Desc?: string;
+  Dataset_Description?: string;
+  Data_SubjectMatter?: string;
+  Data_Type?: string;
+  LabelTypes?: string[];
+  Requirements_Additional?: string;
+  AvailableLanguages?: string[];
+  AvailableCountries?: string[];
+  ExpertiseLevel?: string;
+  TimeRequirement?: string;
+  ProjectType?: string;
+  LabelSoftware?: string;
+  AdditionalSkills?: string[];
+}
+
+export interface UpsertJobRequest {
+  job_id: string;
+  title?: string;
+  fields: JobFields;
+}
+
+export interface NormalizedJobPosting {
+  jobId: string;
+  title?: string;
+  instructions?: string;
+  workloadDesc?: string;
+  datasetDescription?: string;
+  dataSubjectMatter?: string;
+  dataType?: string;
+  labelTypes: string[];
+  requirementsAdditional?: string;
+  availableLanguages: string[];
+  availableCountries: string[];
+  expertiseLevel?: string;
+  timeRequirement?: string;
+  projectType?: string;
+  labelSoftware?: string;
+  additionalSkills: string[];
+  promptText: string;
+  sourceText: string;
+}
+
 export interface UpsertResult {
   vectorId: string;
 }
