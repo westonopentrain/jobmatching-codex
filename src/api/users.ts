@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { AppError, toErrorResponse } from '../utils/errors';
-codex/implement-user-capsule-upsert-service-m0389b
+codex/implement-user-capsule-upsert-service-joqirf
 import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText } from '../utils/sanitize';
 
 import { NormalizedUserProfile } from '../utils/types';
@@ -81,7 +81,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         throw new AppError({
           code: 'VALIDATION_ERROR',
           statusCode: 400,
-codex/implement-user-capsule-upsert-service-m0389b
+codex/implement-user-capsule-upsert-service-joqirf
           message: 'resume_text must not be empty',
 
         });
@@ -146,7 +146,7 @@ codex/implement-user-capsule-upsert-service-m0389b
           domainChars: capsules.domain.text.length,
           taskChars: capsules.task.text.length,
           resumeChars: normalized.resumeText.length,
-codex/implement-user-capsule-upsert-service-m0389b
+codex/implement-user-capsule-upsert-service-joqirf
 
           elapsedMs: elapsedRounded,
         },
