@@ -122,12 +122,14 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         user_id: normalized.userId,
         section: 'domain',
         model: EMBEDDING_MODEL,
+        type: 'user',
       });
 
       await upsertVector(taskVectorId, taskEmbedding, {
         user_id: normalized.userId,
         section: 'task',
         model: EMBEDDING_MODEL,
+        type: 'user',
       });
 
       log.info(
