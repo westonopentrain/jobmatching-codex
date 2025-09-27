@@ -12,21 +12,29 @@ export interface ResponseMessage {
   content: string;
 }
 
-function supportsCustomTemperature(model: string): boolean {
+function isConstrainedModel(model: string): boolean {
   const normalized = model.toLowerCase();
   if (normalized.includes('reasoning')) {
-    return false;
+    return true;
   }
   if (normalized.startsWith('gpt-5')) {
-    return false;
+    return true;
   }
   if (normalized.startsWith('gpt-4.1')) {
-    return false;
+    return true;
   }
   if (normalized.startsWith('o')) {
-    return false;
+    return true;
   }
-  return true;
+  return false;
+}
+
+function supportsCustomTemperature(model: string): boolean {
+  return !isConstrainedModel(model);
+}
+
+function supportsCustomMaxOutputTokens(model: string): boolean {
+  return !isConstrainedModel(model);
 }
 
 type ResponseInputValue = Exclude<ResponseCreateParamsNonStreaming['input'], undefined>;
@@ -58,7 +66,7 @@ export async function createTextResponse({
     input: buildResponseInput(messages),
   };
 
-  if (typeof maxOutputTokens === 'number') {
+  if (typeof maxOutputTokens === 'number' && supportsCustomMaxOutputTokens(model)) {
     params.max_output_tokens = maxOutputTokens;
   }
 
