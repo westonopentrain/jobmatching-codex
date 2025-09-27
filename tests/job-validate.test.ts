@@ -39,7 +39,17 @@ Keywords: OB-GYN, obstetrics, gynecology, maternal-fetal medicine, gynecologic o
     const capsule = `Obstetrics and gynecology coverage referencing prenatal diagnostics and gynecologic oncology, maternal-fetal medicine, reproductive endocrinology, pelvic floor disorders, perinatal genetics, fetal ultrasound, postpartum care, neonatal intensive care collaboration, obstetric anesthesia considerations.
 Keywords: obstetrics, gynecology, prenatal diagnostics, gynecologic oncology, maternal-fetal medicine, reproductive endocrinology, pelvic floor disorders, perinatal genetics, fetal ultrasound, postpartum care, neonatal intensive care, fictitious keyword`;
 
-    expect(() => validateJobDomainCapsule(capsule, baseJob)).toThrowError(/keywords must appear/i);
+    try {
+      validateJobDomainCapsule(capsule, baseJob);
+      throw new Error('Expected validation to throw');
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      expect(error.message).toMatch(/keywords must appear/i);
+      const appError = error as Error & { details?: { context?: string } };
+      expect(appError.details?.context).toBe('domain');
+    }
   });
 
   it('allows multi-word keywords when a majority of tokens appear in job text', () => {
@@ -75,5 +85,22 @@ Keywords: obstetrics, gynecology, clinical question, prompt+response, evaluation
 Keywords: obstetric prompts, maternal health, gynecologic oncology, rubric-driven scoring, terminology taxonomies, evidence-grounded rationales`;
 
     expect(() => validateJobTaskCapsule(capsule, baseJob)).toThrowError(/between 10 and 20/);
+  });
+
+  it('throws keyword alignment error with task context', () => {
+    const capsule = `Clinicians annotate obstetrics chatbot prompts, grade gynecology responses, audit evaluation rubrics, and document calibration findings for maternal health datasets. They cross-check obstetric terminology, review fetal care case narratives, and finalize benchmark scoring criteria for obstetrics question answering.
+Keywords: obstetrics, gynecology, annotations, calibration, evaluation rubrics, benchmark scoring, fetal care, maternal health, obstetric terminology, obstetrics qa, fictitious keyword`;
+
+    try {
+      validateJobTaskCapsule(capsule, baseJob);
+      throw new Error('Expected validation to throw');
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      expect(error.message).toMatch(/keywords must appear/i);
+      const appError = error as Error & { details?: { context?: string } };
+      expect(appError.details?.context).toBe('task');
+    }
   });
 });
