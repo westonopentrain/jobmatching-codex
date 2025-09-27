@@ -7,6 +7,7 @@ import { requireEnv } from '../utils/env';
 import { EMBEDDING_DIMENSION, EMBEDDING_MODEL, embedText } from '../services/embeddings';
 import { upsertVector } from '../services/pinecone';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
+import { JobFields, UpsertJobRequest } from '../utils/types';
 
 const fieldSchema = z.object({
   Instructions: z.string().optional(),
@@ -52,7 +53,23 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const normalized = normalizeJobRequest(parsed.data);
+      const rawFields = parsed.data.fields;
+      const fieldEntries = Object.entries(rawFields).filter(([, value]) => value !== undefined) as Array<[
+        keyof JobFields,
+        JobFields[keyof JobFields],
+      ]>;
+      const fields = Object.fromEntries(fieldEntries) as JobFields;
+
+      const upsertRequest: UpsertJobRequest = {
+        job_id: parsed.data.job_id,
+        fields,
+      };
+
+      if (parsed.data.title !== undefined) {
+        upsertRequest.title = parsed.data.title;
+      }
+
+      const normalized = normalizeJobRequest(upsertRequest);
 
       const capsules = await generateJobCapsules(normalized);
       log.info(

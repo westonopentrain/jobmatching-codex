@@ -2,8 +2,13 @@ export type ErrorCode =
   | 'LLM_FAILURE'
   | 'EMBEDDING_FAILURE'
   | 'UPSERT_FAILURE'
+  | 'JOB_UPSERT_FAILURE'
   | 'VALIDATION_ERROR'
-  | 'UNAUTHORIZED';
+  | 'UNAUTHORIZED'
+  | 'MISSING_VECTOR'
+  | 'MATCH_FAILURE'
+  | 'PINECONE_FETCH_FAILURE'
+  | 'PINECONE_QUERY_FAILURE';
 
 export interface ErrorDetails {
   hint?: string;
