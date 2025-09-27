@@ -87,10 +87,185 @@ const TASK_NON_AI_PHRASES = [
   'copywriting',
 ];
 
+const KEYWORD_SYNONYM_GROUPS: string[][] = [
+  [
+    'annotation',
+    'annotations',
+    'annotating',
+    'annotated',
+    'annotator',
+    'annotators',
+    'label',
+    'labels',
+    'labeling',
+    'labelling',
+    'labeler',
+    'labelers',
+    'labeller',
+    'labellers',
+    'tag',
+    'tags',
+    'tagging',
+    'tagged',
+  ],
+];
+
+const KEYWORD_SYNONYM_LOOKUP: Map<string, Set<string>> = new Map();
+
+for (const group of KEYWORD_SYNONYM_GROUPS) {
+  const normalizedGroup = group
+    .map((entry) => normalizeForSearch(entry))
+    .filter((entry) => entry.length > 0);
+
+  for (const token of normalizedGroup) {
+    if (!KEYWORD_SYNONYM_LOOKUP.has(token)) {
+      KEYWORD_SYNONYM_LOOKUP.set(token, new Set());
+    }
+
+    const bucket = KEYWORD_SYNONYM_LOOKUP.get(token)!;
+    for (const synonym of normalizedGroup) {
+      if (synonym !== token && !synonym.includes(' ')) {
+        bucket.add(synonym);
+      }
+    }
+  }
+}
+
+function getSynonymTokens(token: string): string[] {
+  const synonyms = KEYWORD_SYNONYM_LOOKUP.get(token);
+  if (!synonyms) {
+    return [];
+  }
+  return Array.from(synonyms);
+}
+
 interface ParsedCapsule {
   body: string;
   keywordsLine: string;
   keywords: string[];
+}
+
+function normalizeForSearch(input: string): string {
+  return input
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenize(text: string): string[] {
+  if (!text) return [];
+  const normalized = normalizeForSearch(text);
+  if (!normalized) return [];
+  return normalized.split(' ');
+}
+
+function buildTokenVariants(token: string): string[] {
+  const variants = new Set<string>([token]);
+
+  if (token.endsWith('ies') && token.length > 3) {
+    variants.add(`${token.slice(0, -3)}y`);
+  }
+
+  if (token.endsWith('es') && token.length > 2) {
+    variants.add(token.slice(0, -2));
+  }
+
+  if (token.endsWith('s') && token.length > 1) {
+    variants.add(token.slice(0, -1));
+  }
+
+  if (token.endsWith('ing') && token.length > 4) {
+    variants.add(token.slice(0, -3));
+    variants.add(`${token.slice(0, -3)}e`);
+  }
+
+  if (token.endsWith('ed') && token.length > 3) {
+    variants.add(token.slice(0, -2));
+    variants.add(token.slice(0, -1));
+  }
+
+  if (token.endsWith('er') && token.length > 3) {
+    variants.add(token.slice(0, -2));
+  }
+
+  if (token.endsWith('ency') && token.length > 4) {
+    variants.add(`${token.slice(0, -3)}t`);
+  }
+
+  if (token.endsWith('ancy') && token.length > 4) {
+    variants.add(`${token.slice(0, -3)}t`);
+  }
+
+  return Array.from(variants);
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  const matrix: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+
+  for (let i = 0; i <= a.length; i += 1) {
+    matrix[i]![0] = i;
+  }
+
+  for (let j = 0; j <= b.length; j += 1) {
+    matrix[0]![j] = j;
+  }
+
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i]![j] = Math.min(
+        matrix[i - 1]![j]! + 1,
+        matrix[i]![j - 1]! + 1,
+        matrix[i - 1]![j - 1]! + cost
+      );
+    }
+  }
+
+  return matrix[a.length]![b.length]!;
+}
+
+function tokenMatches(token: string, haystackSet: Set<string>, haystackTokens: string[]): boolean {
+  const tokensToCheck = new Set<string>([token, ...buildTokenVariants(token)]);
+
+  for (const candidate of tokensToCheck) {
+    if (haystackSet.has(candidate)) {
+      return true;
+    }
+
+    for (const synonym of getSynonymTokens(candidate)) {
+      if (haystackSet.has(synonym)) {
+        return true;
+      }
+    }
+  }
+
+  if (token.length >= 4) {
+    for (const candidate of haystackTokens) {
+      if (Math.abs(candidate.length - token.length) > 2) continue;
+      if (levenshteinDistance(token, candidate) <= 1) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function countTokenMatches(tokens: string[], haystackSet: Set<string>, haystackTokens: string[]): number {
+  let matches = 0;
+  for (const token of tokens) {
+    if (tokenMatches(token, haystackSet, haystackTokens)) {
+      matches += 1;
+    }
+  }
+  return matches;
 }
 
 function splitCapsule(capsule: string): ParsedCapsule {
@@ -149,13 +324,26 @@ function splitCapsule(capsule: string): ParsedCapsule {
 }
 
 function ensureKeywordsAppear(keywords: string[], capsuleText: string, jobSource: string): void {
-  const capsuleLower = capsuleText.toLowerCase();
-  const jobLower = jobSource.toLowerCase();
+  const capsuleTokens = tokenize(capsuleText);
+  const jobTokens = tokenize(jobSource);
+
+  const capsuleTokenSet = new Set(capsuleTokens);
+  const jobTokenSet = new Set(jobTokens);
 
   const missing: string[] = [];
+
   for (const keyword of keywords) {
-    const normalized = keyword.toLowerCase();
-    if (!capsuleLower.includes(normalized) || !jobLower.includes(normalized)) {
+    const keywordTokens = tokenize(keyword);
+    if (keywordTokens.length === 0) {
+      continue;
+    }
+
+    const requiredMatches = keywordTokens.length === 1 ? 1 : Math.max(1, Math.ceil(keywordTokens.length / 2));
+
+    const capsuleMatches = countTokenMatches(keywordTokens, capsuleTokenSet, capsuleTokens);
+    const jobMatches = countTokenMatches(keywordTokens, jobTokenSet, jobTokens);
+
+    if (capsuleMatches < requiredMatches || jobMatches < requiredMatches) {
       missing.push(keyword);
     }
   }

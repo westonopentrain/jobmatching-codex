@@ -41,6 +41,42 @@ Keywords: obstetrics, gynecology, prenatal diagnostics, gynecologic oncology, ma
 
     expect(() => validateJobDomainCapsule(capsule, baseJob)).toThrowError(/keywords must appear/i);
   });
+
+  it('allows multi-word keywords when a majority of tokens appear in job text', () => {
+    const capsule = `Expert clinicians in obstetrics and gynecology provide capsule summaries covering maternal-fetal medicine, gynecologic oncology, perinatal genetics, prenatal screening programs, postpartum recovery support, and English fluency expectations for collaborating physicians while fostering clinical collaboration among specialists.
+Keywords: obstetrics, gynecology, maternal-fetal medicine, gynecologic oncology, perinatal genetics, postpartum recovery, English fluency, prenatal screening, clinical collaboration, obstetric specialists`;
+
+    const keywordRichJob: NormalizedJobPosting = {
+      jobId: 'j_keywords',
+      promptText: 'Job text',
+      sourceText:
+        'obstetrics gynecology maternal fetal medicine gynecologic oncology perinatal genetics postpartum recovery prenatal screening clinical collaboration obstetric specialists English communication',
+      labelTypes: [],
+      availableLanguages: [],
+      availableCountries: [],
+      additionalSkills: [],
+    };
+
+    expect(() => validateJobDomainCapsule(capsule, keywordRichJob)).not.toThrow();
+  });
+
+  it('accepts synonymous keywords like annotations when job text references labeling', () => {
+    const capsule = `Clinicians support obstetrics dataset quality by reviewing maternal-fetal medicine question sets, curating gynecologic oncology vignettes, and preparing structured evaluation prompts while collaborating with annotators for medical terminology accuracy across obstetrics and gynecology programs.
+Keywords: obstetrics, gynecology, maternal-fetal medicine, gynecologic oncology, medical terminology, evaluation, annotations, dataset quality, clinical vignettes, obstetric datasets`;
+
+    const job: NormalizedJobPosting = {
+      jobId: 'j_synonyms',
+      promptText: 'Job text',
+      sourceText:
+        'obstetrics gynecology maternal fetal medicine gynecologic oncology medical terminology evaluation labels dataset quality clinical vignettes obstetric datasets',
+      labelTypes: [],
+      availableLanguages: [],
+      availableCountries: [],
+      additionalSkills: [],
+    };
+
+    expect(() => validateJobDomainCapsule(capsule, job)).not.toThrow();
+  });
 });
 
 describe('validateJobTaskCapsule', () => {
