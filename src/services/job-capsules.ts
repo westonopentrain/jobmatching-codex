@@ -9,7 +9,11 @@ const JOB_CAPSULE_SYSTEM_MESSAGE =
   'You produce two concise, high-precision capsules for vector search from a job posting.\nCapsules must be grammatical sentences only (no bullet lists, no angle brackets, no telegraph style).\nUse only facts present in the job text. Do not invent tools, tasks, or domains.\nBe PII-safe: do not include company names or personal names.\nReturn strictly valid JSON; no commentary or extra text outside the JSON.';
 
 const CAPSULE_TEMPERATURE = 0.2;
-const CAPSULE_MAX_OUTPUT_TOKENS = 800;
+// Allow additional room for the model to satisfy the strict
+// formatting + keyword requirements without truncation. The
+// previous 800-token cap caused occasional incomplete responses
+// from OpenAI ("max_output_tokens").
+const CAPSULE_MAX_OUTPUT_TOKENS = 1600;
 
 const KEYWORD_MIN_COUNT = 10;
 
