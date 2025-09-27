@@ -25,7 +25,9 @@ function supportsCustomTemperature(model: string): boolean {
   return true;
 }
 
-function buildResponseInput(messages: ResponseMessage[]): ResponseCreateParamsNonStreaming['input'] {
+type ResponseInputValue = Exclude<ResponseCreateParamsNonStreaming['input'], undefined>;
+
+function buildResponseInput(messages: ResponseMessage[]): ResponseInputValue {
   return messages.map((message) => ({
     role: message.role,
     content: message.content,
