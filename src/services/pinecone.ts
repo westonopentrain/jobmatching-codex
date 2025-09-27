@@ -69,13 +69,21 @@ export async function upsertVector(id: string, values: number[], metadata: Vecto
   });
 }
 
-export async function fetchVectors(ids: string[]): Promise<Record<string, FetchedVector>> {
+interface FetchOptions {
+  namespace?: string;
+}
+
+export async function fetchVectors(ids: string[], options?: FetchOptions): Promise<Record<string, FetchedVector>> {
   if (ids.length === 0) {
     return {};
   }
 
   const index = getIndex();
-  const response = await withRetry(() => index.fetch(ids)).catch((error) => {
+  const fetchArgs = options?.namespace ? { ids, namespace: options.namespace } : ids;
+
+  const response = await withRetry(() =>
+    index.fetch(fetchArgs as Parameters<Index<VectorMetadata>['fetch']>[0])
+  ).catch((error) => {
     if (error instanceof AppError) {
       throw error;
     }
@@ -105,11 +113,12 @@ interface QueryOptions {
   values: number[];
   topK: number;
   filter?: Record<string, unknown>;
+  namespace?: string;
 }
 
 export async function queryByVector(options: QueryOptions): Promise<QueryMatch[]> {
   const index = getIndex();
-  const queryRequest: Parameters<Index<VectorMetadata>['query']>[0] = {
+  const queryRequest: Record<string, unknown> = {
     vector: options.values,
     topK: options.topK,
     includeMetadata: true,
@@ -119,7 +128,13 @@ export async function queryByVector(options: QueryOptions): Promise<QueryMatch[]
     queryRequest.filter = options.filter;
   }
 
-  const response = await withRetry(() => index.query(queryRequest)).catch((error) => {
+  if (options.namespace) {
+    queryRequest.namespace = options.namespace;
+  }
+
+  const response = await withRetry(() =>
+    index.query(queryRequest as Parameters<Index<VectorMetadata>['query']>[0])
+  ).catch((error) => {
     if (error instanceof AppError) {
       throw error;
     }
