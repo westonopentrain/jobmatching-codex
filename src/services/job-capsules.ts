@@ -87,21 +87,21 @@ function buildPrompt(
 
   return `You must produce EXACTLY two blocks in this order.
 
-Block 1 — Job Domain Capsule (domain-only, evidence-constrained)
+Block 1 — Job Domain Capsule (subject-matter only)
 - Use ONLY tokens from DOMAIN_EVIDENCE (or obvious standard synonyms of those exact tokens).
-- Produce 1–2 concise sentences (no angle brackets, no lists). Noun-dense; avoid roles, narratives, logistics, or soft skills.
-- DO NOT include AI/LLM labeling/training/evaluation terms, tools, or QA.
-- Target 80–160 words (<=200 hard cap).
+- Compose 1–2 complete sentences (45–100 words) packed with specialty nouns, procedures, and credential phrases.
+- Exclude hiring, logistics, marketing, availability, compensation, soft skills, tooling, or AI/LLM terminology.
+- Do not repeat the same token more than once unless it names a distinct sub-specialty.
 - End with: Keywords: <10–20 tokens chosen ONLY from DOMAIN_EVIDENCE and present in this paragraph>.
 
-Block 2 — Job Task Capsule (AI/LLM work only, evidence-constrained)
+Block 2 — Job Task Capsule (AI/LLM work only)
 - Use ONLY tokens from TASK_EVIDENCE (or obvious standard synonyms of those exact tokens).
-- Describe labeling/training/evaluation activities, label types, modalities, tools/platforms, workflows (SFT, RLHF, DPO) explicitly present in the job.
-- EXCLUDE logistics/hiring/budget/schedule/country/language requirements unless explicitly part of the labeling task (e.g., “Spanish transcription”).
-- 120–200 words (<=220 hard cap).
+- Summarize the labeling/training/evaluation workflow in 2–3 crisp sentences (70–140 words) covering label types, modalities, rubrics, and tools explicitly in the job text.
+- Exclude hiring/logistics/budget/country/language requirements unless they are intrinsic to the data work itself.
+- Avoid chant-like repetition—each noun or task should appear once.
 - End with: Keywords: <10–20 tokens chosen ONLY from TASK_EVIDENCE and present in this paragraph>.
 
-Do not use angle brackets < >. Do not output bullet lists.
+Do not use angle brackets < >. Do not output bullet lists. Keep both paragraphs purely text with standard punctuation.
 
 JOB (verbatim):
 ${job.promptText}
