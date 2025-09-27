@@ -1,47 +1,23 @@
 import { getOpenAIClient } from './openai-client';
 import { resolveCapsuleModel } from './openai-model';
+import { extractCapsuleTexts } from './capsules';
 import { withRetry } from '../utils/retry';
 import { AppError } from '../utils/errors';
 import { logger } from '../utils/logger';
-import { extractCapsuleTexts } from './capsules';
 import { sanitizeJobField, sanitizeJobStringArray } from '../utils/sanitize';
 import { CapsulePair, NormalizedJobPosting, UpsertJobRequest } from '../utils/types';
-import { validateJobDomainCapsule, validateJobTaskCapsule } from './job-validate';
+import { extractLabelingEvidence, LabelingEvidenceResult } from '../utils/evidence';
+import { extractDomainEvidence, DomainEvidence } from '../utils/evidence_domain';
+import {
+  validateDomainCapsuleText,
+  validateTaskCapsuleText,
+} from './validate_job_capsules';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
-  'You generate Job Domain and Task capsules for vector search in a job marketplace. Use only facts from the provided job fields.';
+  'You generate Job Domain and Task capsules for vector search across ANY domain. Be PII-safe. Do not include names. Output sentences only (no angle brackets, no bullets).';
 
 const CAPSULE_TEMPERATURE = 0.2;
-
-interface PromptOverrides {
-  domainDirective?: string;
-  taskDirective?: string;
-}
-
-type MergeDirectiveResult =
-  | { changed: false; text: string | undefined }
-  | { changed: true; text: string };
-
-function mergeDirective(current: string | undefined, addition: string): MergeDirectiveResult {
-  if (!addition.trim()) {
-    return { text: current, changed: false };
-  }
-  if (!current) {
-    return { text: addition, changed: true };
-  }
-  if (current.includes(addition)) {
-    return { text: current, changed: false };
-  }
-  return { text: `${current} ${addition}`.trim(), changed: true };
-}
-
-const DOMAIN_KEYWORD_DIRECTIVE =
-  'Ensure Keywords line only repeats tokens that appear verbatim in the domain capsule paragraph and provided job fields.';
-const TASK_KEYWORD_DIRECTIVE =
-  'Ensure Keywords line only repeats tokens that appear verbatim in the task capsule paragraph and provided job fields.';
-const DOMAIN_AI_DIRECTIVE = 'Remove AI/LLM terms; keep domain nouns only.';
-const TASK_AI_DIRECTIVE =
-  'Remove non-AI duties; keep only AI/LLM labeling/training/eval tasks, tools, labels, modalities, QA.';
+const MAX_GENERATION_ATTEMPTS = 3;
 
 function assertHasFields(pairs: Array<[string, string]>): void {
   if (pairs.length === 0) {
@@ -57,38 +33,91 @@ function formatPairsForPrompt(pairs: Array<[string, string]>): string {
   return pairs.map(([label, value]) => `${label}: ${value}`).join('\n');
 }
 
-function buildPrompt(job: NormalizedJobPosting, overrides: PromptOverrides): string {
-  const basePrompt = `You must produce EXACTLY two blocks in this order.
+function combineEvidenceTerms(evidence: DomainEvidence | LabelingEvidenceResult): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
 
-Block 1 — Job Domain Capsule
-- Be domain-agnostic (works for medicine, software, writing, finance, legal, etc.).
-- Use ONLY facts in the job. Do NOT invent anything.
-- Produce a compact, noun-dense paragraph listing subject-matter nouns ONLY (specialties, subdisciplines, procedures, frameworks, standards, credentials, settings, data types).
-- Omit AI/LLM labeling/evaluation/training terms, tools, or QA.
-- Avoid roles, process narratives, or boilerplate.
-- Target 80-160 words (<=200 hard cap).
-- End with: Keywords: <10-20 domain tokens that already appear in the capsule AND the job text>.
-${overrides.domainDirective ? `- Additional directive: ${overrides.domainDirective}` : ''}
+  for (const list of [evidence.phrases, evidence.tokens]) {
+    for (const term of list) {
+      const trimmed = term.trim();
+      if (!trimmed) {
+        continue;
+      }
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      ordered.push(trimmed);
+    }
+  }
 
-Block 2 — Job Task Capsule
-- Describe ONLY AI/LLM data work: labeling/training/evaluation activities, label types, modalities, tools/platforms, QA, workflow specifics explicitly present in the job.
-- Avoid domain specialties except minimal context when co-mentioned with labeling tasks.
-- Exclude generic non-AI duties unless the job explicitly ties them to AI/LLM data work.
-- Target 120-200 words (<=220 hard cap).
-- End with: Keywords: <10-20 task/tool/label/modality tokens that already appear in the capsule AND the job text>.
-${overrides.taskDirective ? `- Additional directive: ${overrides.taskDirective}` : ''}
+  return ordered;
+}
+
+function formatEvidenceBlock(terms: string[]): string {
+  if (terms.length === 0) {
+    return '(none)';
+  }
+  return terms.join(', ');
+}
+
+function buildDomainEvidenceSource(job: NormalizedJobPosting): string {
+  const segments: string[] = [];
+  if (job.title) segments.push(job.title);
+  if (job.instructions) segments.push(job.instructions);
+  if (job.datasetDescription) segments.push(job.datasetDescription);
+  if (job.dataSubjectMatter) segments.push(job.dataSubjectMatter);
+  if (job.dataType) segments.push(job.dataType);
+  if (job.requirementsAdditional) segments.push(job.requirementsAdditional);
+  if (job.additionalSkills.length > 0) segments.push(job.additionalSkills.join('\n'));
+  return segments
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .join('\n');
+}
+
+function buildPrompt(
+  job: NormalizedJobPosting,
+  domainEvidence: DomainEvidence,
+  taskEvidence: LabelingEvidenceResult
+): string {
+  const domainTerms = combineEvidenceTerms(domainEvidence);
+  const taskTerms = combineEvidenceTerms(taskEvidence);
+
+  return `You must produce EXACTLY two blocks in this order.
+
+Block 1 — Job Domain Capsule (domain-only, evidence-constrained)
+- Use ONLY tokens from DOMAIN_EVIDENCE (or obvious standard synonyms of those exact tokens).
+- Produce 1–2 concise sentences (no angle brackets, no lists). Noun-dense; avoid roles, narratives, logistics, or soft skills.
+- DO NOT include AI/LLM labeling/training/evaluation terms, tools, or QA.
+- Target 80–160 words (<=200 hard cap).
+- End with: Keywords: <10–20 tokens chosen ONLY from DOMAIN_EVIDENCE and present in this paragraph>.
+
+Block 2 — Job Task Capsule (AI/LLM work only, evidence-constrained)
+- Use ONLY tokens from TASK_EVIDENCE (or obvious standard synonyms of those exact tokens).
+- Describe labeling/training/evaluation activities, label types, modalities, tools/platforms, workflows (SFT, RLHF, DPO) explicitly present in the job.
+- EXCLUDE logistics/hiring/budget/schedule/country/language requirements unless explicitly part of the labeling task (e.g., “Spanish transcription”).
+- 120–200 words (<=220 hard cap).
+- End with: Keywords: <10–20 tokens chosen ONLY from TASK_EVIDENCE and present in this paragraph>.
+
+Do not use angle brackets < >. Do not output bullet lists.
 
 JOB (verbatim):
 ${job.promptText}
 
-OUTPUT (exact format):
+DOMAIN_EVIDENCE (allowed tokens/phrases for Block 1 only):
+${formatEvidenceBlock(domainTerms)}
+
+TASK_EVIDENCE (allowed tokens/phrases for Block 2 only):
+${formatEvidenceBlock(taskTerms)}
+
+FORMAT:
 <Job Domain Capsule paragraph>
 Keywords: ...
 
 <Job Task Capsule paragraph>
 Keywords: ...`;
-
-  return basePrompt;
 }
 
 export function normalizeJobRequest(request: UpsertJobRequest): NormalizedJobPosting {
@@ -155,13 +184,9 @@ export function normalizeJobRequest(request: UpsertJobRequest): NormalizedJobPos
   return normalized;
 }
 
-async function requestCapsules(
-  job: NormalizedJobPosting,
-  overrides: PromptOverrides
-): Promise<{ domain: string; task: string }> {
+async function requestCapsules(job: NormalizedJobPosting, prompt: string): Promise<{ domain: string; task: string }> {
   const client = getOpenAIClient();
   const capsuleModel = resolveCapsuleModel();
-  const prompt = buildPrompt(job, overrides);
 
   const completion = await withRetry(() =>
     client.chat.completions.create({
@@ -198,92 +223,40 @@ async function requestCapsules(
 }
 
 export async function generateJobCapsules(job: NormalizedJobPosting): Promise<CapsulePair> {
-  let overrides: PromptOverrides = {};
+  const domainEvidenceSource = buildDomainEvidenceSource(job);
+  const domainEvidence = extractDomainEvidence(domainEvidenceSource);
+  const taskEvidence = extractLabelingEvidence(job.sourceText);
+  const prompt = buildPrompt(job, domainEvidence, taskEvidence);
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const capsuleTexts = await requestCapsules(job, overrides);
-
-    let domainValidation;
-    let taskValidation;
+  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt += 1) {
+    const capsuleTexts = await requestCapsules(job, prompt);
 
     try {
-      domainValidation = validateJobDomainCapsule(capsuleTexts.domain, job);
-      taskValidation = validateJobTaskCapsule(capsuleTexts.task, job);
-    } catch (error) {
-      if (
-        error instanceof AppError &&
-        error.message === 'Capsule keywords must appear in both capsule text and job fields'
-      ) {
-        const context = error.details?.context as 'domain' | 'task' | undefined;
-        if (context === 'domain') {
-          const directiveResult = mergeDirective(overrides.domainDirective, DOMAIN_KEYWORD_DIRECTIVE);
-          if (directiveResult.changed) {
-            logger.warn(
-              {
-                event: 'job_capsule.domain_keyword_reprompt',
-                jobId: job.jobId,
-                missing: error.details?.missing,
-              },
-              'Domain capsule keywords missing from capsule or job text; requesting rewrite'
-            );
-            overrides = { ...overrides, domainDirective: directiveResult.text };
-            continue;
-          }
-        } else if (context === 'task') {
-          const directiveResult = mergeDirective(overrides.taskDirective, TASK_KEYWORD_DIRECTIVE);
-          if (directiveResult.changed) {
-            logger.warn(
-              {
-                event: 'job_capsule.task_keyword_reprompt',
-                jobId: job.jobId,
-                missing: error.details?.missing,
-              },
-              'Task capsule keywords missing from capsule or job text; requesting rewrite'
-            );
-            overrides = { ...overrides, taskDirective: directiveResult.text };
-            continue;
-          }
-        }
-      }
-      throw error;
-    }
-
-    if (domainValidation.needsDomainReprompt) {
-      const directiveResult = mergeDirective(overrides.domainDirective, DOMAIN_AI_DIRECTIVE);
-      if (directiveResult.changed) {
-        overrides = { ...overrides, domainDirective: directiveResult.text };
-        logger.warn(
-          { event: 'job_capsule.domain_reprompt', jobId: job.jobId },
-          'Domain capsule contained AI/LLM terms; requesting rewrite'
-        );
-        continue;
-      }
-    }
-
-    if (taskValidation.needsTaskReprompt) {
-      const directiveResult = mergeDirective(overrides.taskDirective, TASK_AI_DIRECTIVE);
-      if (directiveResult.changed) {
-        overrides = { ...overrides, taskDirective: directiveResult.text };
-        logger.warn(
-          { event: 'job_capsule.task_reprompt', jobId: job.jobId },
-          'Task capsule contained non-AI duties; requesting rewrite'
-        );
-        continue;
-      }
-    }
-
-    if (domainValidation.needsDomainReprompt || taskValidation.needsTaskReprompt) {
-      throw new AppError({
-        code: 'LLM_FAILURE',
-        statusCode: 502,
-        message: 'Failed to generate compliant job capsules after retries',
+      const domainText = await validateDomainCapsuleText(capsuleTexts.domain, {
+        evidence: domainEvidence,
       });
-    }
+      const taskText = await validateTaskCapsuleText(capsuleTexts.task, {
+        evidence: taskEvidence,
+      });
 
-    return {
-      domain: { text: domainValidation.text },
-      task: { text: taskValidation.text },
-    };
+      return {
+        domain: { text: domainText },
+        task: { text: taskText },
+      };
+    } catch (error) {
+      if (attempt === MAX_GENERATION_ATTEMPTS - 1) {
+        throw error;
+      }
+      logger.warn(
+        {
+          event: 'job_capsule.validation_retry',
+          jobId: job.jobId,
+          attempt: attempt + 1,
+          message: (error as Error).message,
+        },
+        'Retrying job capsule generation due to validation failure'
+      );
+    }
   }
 
   throw new AppError({
