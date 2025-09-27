@@ -18,10 +18,11 @@ interface PromptOverrides {
   taskDirective?: string;
 }
 
-function mergeDirective(
-  current: string | undefined,
-  addition: string
-): { text: string | undefined; changed: boolean } {
+type MergeDirectiveResult =
+  | { changed: false; text: string | undefined }
+  | { changed: true; text: string };
+
+function mergeDirective(current: string | undefined, addition: string): MergeDirectiveResult {
   if (!addition.trim()) {
     return { text: current, changed: false };
   }
@@ -215,8 +216,8 @@ export async function generateJobCapsules(job: NormalizedJobPosting): Promise<Ca
       ) {
         const context = error.details?.context as 'domain' | 'task' | undefined;
         if (context === 'domain') {
-          const { text, changed } = mergeDirective(overrides.domainDirective, DOMAIN_KEYWORD_DIRECTIVE);
-          if (changed) {
+          const directiveResult = mergeDirective(overrides.domainDirective, DOMAIN_KEYWORD_DIRECTIVE);
+          if (directiveResult.changed) {
             logger.warn(
               {
                 event: 'job_capsule.domain_keyword_reprompt',
@@ -225,12 +226,12 @@ export async function generateJobCapsules(job: NormalizedJobPosting): Promise<Ca
               },
               'Domain capsule keywords missing from capsule or job text; requesting rewrite'
             );
-            overrides = { ...overrides, domainDirective: text };
+            overrides = { ...overrides, domainDirective: directiveResult.text };
             continue;
           }
         } else if (context === 'task') {
-          const { text, changed } = mergeDirective(overrides.taskDirective, TASK_KEYWORD_DIRECTIVE);
-          if (changed) {
+          const directiveResult = mergeDirective(overrides.taskDirective, TASK_KEYWORD_DIRECTIVE);
+          if (directiveResult.changed) {
             logger.warn(
               {
                 event: 'job_capsule.task_keyword_reprompt',
@@ -239,7 +240,7 @@ export async function generateJobCapsules(job: NormalizedJobPosting): Promise<Ca
               },
               'Task capsule keywords missing from capsule or job text; requesting rewrite'
             );
-            overrides = { ...overrides, taskDirective: text };
+            overrides = { ...overrides, taskDirective: directiveResult.text };
             continue;
           }
         }
@@ -248,9 +249,9 @@ export async function generateJobCapsules(job: NormalizedJobPosting): Promise<Ca
     }
 
     if (domainValidation.needsDomainReprompt) {
-      const { text, changed } = mergeDirective(overrides.domainDirective, DOMAIN_AI_DIRECTIVE);
-      if (changed) {
-        overrides = { ...overrides, domainDirective: text };
+      const directiveResult = mergeDirective(overrides.domainDirective, DOMAIN_AI_DIRECTIVE);
+      if (directiveResult.changed) {
+        overrides = { ...overrides, domainDirective: directiveResult.text };
         logger.warn(
           { event: 'job_capsule.domain_reprompt', jobId: job.jobId },
           'Domain capsule contained AI/LLM terms; requesting rewrite'
@@ -260,9 +261,9 @@ export async function generateJobCapsules(job: NormalizedJobPosting): Promise<Ca
     }
 
     if (taskValidation.needsTaskReprompt) {
-      const { text, changed } = mergeDirective(overrides.taskDirective, TASK_AI_DIRECTIVE);
-      if (changed) {
-        overrides = { ...overrides, taskDirective: text };
+      const directiveResult = mergeDirective(overrides.taskDirective, TASK_AI_DIRECTIVE);
+      if (directiveResult.changed) {
+        overrides = { ...overrides, taskDirective: directiveResult.text };
         logger.warn(
           { event: 'job_capsule.task_reprompt', jobId: job.jobId },
           'Task capsule contained non-AI duties; requesting rewrite'
