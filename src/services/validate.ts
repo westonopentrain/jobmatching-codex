@@ -1,7 +1,7 @@
-import { getOpenAIClient } from './openai-client';
 import { resolveCapsuleModel } from './openai-model';
 import { withRetry } from '../utils/retry';
 import { logger } from '../utils/logger';
+import { createTextResponse } from './openai-responses';
 
 const FIXED_SENTENCE =
   'No AI/LLM data-labeling, model training, or evaluation experience was provided in the source.';
@@ -285,11 +285,10 @@ function buildDomainCapsule(body: string): string {
 }
 
 async function rewriteDomainCapsuleSafe(text: string): Promise<string | null> {
-  const client = getOpenAIClient();
   const capsuleModel = resolveCapsuleModel();
   try {
-    const completion = await withRetry(() =>
-      client.chat.completions.create({
+    const rewritten = await withRetry(() =>
+      createTextResponse({
         model: capsuleModel,
         messages: [
           {
@@ -305,7 +304,6 @@ async function rewriteDomainCapsuleSafe(text: string): Promise<string | null> {
         temperature: 0.1,
       })
     );
-    const rewritten = completion.choices?.[0]?.message?.content?.trim();
     return rewritten && rewritten.length > 0 ? rewritten : null;
   } catch (error) {
     logger.warn(

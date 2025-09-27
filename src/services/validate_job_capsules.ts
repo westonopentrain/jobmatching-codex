@@ -1,9 +1,9 @@
-import { getOpenAIClient } from './openai-client';
 import { resolveCapsuleModel } from './openai-model';
 import { withRetry } from '../utils/retry';
 import { AppError } from '../utils/errors';
 import { DomainEvidence } from '../utils/evidence_domain';
 import { LabelingEvidenceResult } from '../utils/evidence';
+import { createTextResponse } from './openai-responses';
 
 const KEYWORD_MIN = 10;
 const KEYWORD_MAX = 20;
@@ -239,12 +239,11 @@ async function defaultRewriteCapsule(body: string, directive: string, evidence: 
   if (evidence.length === 0) {
     return body;
   }
-  const client = getOpenAIClient();
   const capsuleModel = resolveCapsuleModel();
   const evidenceBlock = evidence.join(', ');
 
-  const completion = await withRetry(() =>
-    client.chat.completions.create({
+  const rewritten = await withRetry(() =>
+    createTextResponse({
       model: capsuleModel,
       temperature: 0.1,
       messages: [
@@ -266,8 +265,6 @@ async function defaultRewriteCapsule(body: string, directive: string, evidence: 
       details: { message: (error as Error).message },
     });
   });
-
-  const rewritten = completion.choices?.[0]?.message?.content?.trim();
   if (!rewritten) {
     throw new AppError({
       code: 'LLM_FAILURE',
