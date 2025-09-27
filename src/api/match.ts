@@ -2,32 +2,69 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
 import { AppError, toErrorResponse } from '../utils/errors';
-import { requireEnv } from '../utils/env';
+import { getEnv, requireEnv } from '../utils/env';
 import { ensureAuthorized } from '../utils/auth';
 import { EMBEDDING_DIMENSION } from '../services/embeddings';
 import { fetchVectors, queryByVector, QueryMatch } from '../services/pinecone';
 
+const SCORE_FORMULA = 'two-channel-linear-v1';
+const MAX_CANDIDATES = 50_000;
+const TOPK_CAP = 10_000;
+const FILTER_CHUNK_SIZE = 500;
+const EPSILON = 1e-9;
+
 const scoreRequestSchema = z.object({
   job_id: z.string().min(1),
-  candidate_user_ids: z.array(z.string().min(1)).min(1),
-  w_domain: z.number().min(0).default(1.0),
-  w_task: z.number().min(0).default(1.0),
-  topK: z.number().int().positive().optional(),
+  candidate_user_ids: z.array(z.string().min(1)).min(1).max(MAX_CANDIDATES),
+  w_domain: z.number().nonnegative().default(1.0),
+  w_task: z.number().nonnegative().default(0.0),
+  topK: z.number().int().positive().max(MAX_CANDIDATES).optional(),
   threshold: z.number().min(-1).max(1).optional(),
 });
 
-interface ScoreEntry {
+type Channel = 'domain' | 'task';
+
+interface CandidateScore {
   user_id: string;
-  s_domain: number;
-  s_task: number;
+  s_domain: number | null;
+  s_task: number | null;
   final: number;
+  rank: number;
 }
 
-function buildFilter(section: 'domain' | 'task', candidateIds: string[]) {
+function chunkArray<T>(items: readonly T[], chunkSize: number): T[][] {
+  if (chunkSize <= 0) {
+    return [items.slice()];
+  }
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function roundScore(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function isValidVector(values: number[] | undefined): values is number[] {
+  return Array.isArray(values) && values.length === EMBEDDING_DIMENSION;
+}
+
+function normalizeWeights(rawDomain: number, rawTask: number): { domain: number; task: number } {
+  if (!Number.isFinite(rawDomain) || !Number.isFinite(rawTask)) {
+    throw new AppError({
+      code: 'UNPROCESSABLE_WEIGHTS',
+      statusCode: 422,
+      message: 'Weights must be finite numbers',
+    });
+  }
+
+  const total = Math.max(rawDomain + rawTask, EPSILON);
   return {
-    section,
-    user_id: { $in: candidateIds },
-  } as Record<string, unknown>;
+    domain: rawDomain / total,
+    task: rawTask / total,
+  };
 }
 
 function extractScores(matches: QueryMatch[]): Map<string, number> {
@@ -38,25 +75,164 @@ function extractScores(matches: QueryMatch[]): Map<string, number> {
     if (!userId) {
       continue;
     }
-    if (!map.has(userId) || (map.get(userId) ?? 0) < match.score) {
+    const existing = map.get(userId);
+    if (existing === undefined || match.score > existing) {
       map.set(userId, match.score);
     }
   }
   return map;
 }
 
-function ensureVectorExists(values: number[] | undefined, vectorId: string): asserts values is number[] {
-  if (!values || values.length !== EMBEDDING_DIMENSION) {
-    throw new AppError({
-      code: 'MISSING_VECTOR',
-      statusCode: 404,
-      message: `Vector ${vectorId} was not found or is invalid`,
-    });
+interface MergeScoresResult {
+  results: CandidateScore[];
+  missingDomain: string[];
+  missingTask: string[];
+  countGteThreshold?: number;
+}
+
+function mergeScores(
+  candidateIds: string[],
+  domainScores: Map<string, number>,
+  taskScores: Map<string, number>,
+  weights: { domain: number; task: number },
+  threshold?: number
+): MergeScoresResult {
+  const missingDomain: string[] = [];
+  const missingTask: string[] = [];
+  const missingDomainSeen = new Set<string>();
+  const missingTaskSeen = new Set<string>();
+
+  const unsorted = candidateIds.map((userId) => {
+    const hasDomain = domainScores.has(userId);
+    const domainScore = hasDomain ? domainScores.get(userId)! : null;
+    if (!hasDomain && !missingDomainSeen.has(userId)) {
+      missingDomainSeen.add(userId);
+      missingDomain.push(userId);
+    }
+
+    const hasTask = taskScores.has(userId);
+    const taskScore = hasTask ? taskScores.get(userId)! : null;
+    if (!hasTask && !missingTaskSeen.has(userId)) {
+      missingTaskSeen.add(userId);
+      missingTask.push(userId);
+    }
+
+    const finalRaw = weights.domain * (domainScore ?? 0) + weights.task * (taskScore ?? 0);
+
+    return {
+      user_id: userId,
+      s_domain: domainScore,
+      s_task: taskScore,
+      finalRaw,
+    };
+  });
+
+  unsorted.sort((a, b) => {
+    if (b.finalRaw !== a.finalRaw) {
+      return b.finalRaw - a.finalRaw;
+    }
+    const domainA = a.s_domain ?? Number.NEGATIVE_INFINITY;
+    const domainB = b.s_domain ?? Number.NEGATIVE_INFINITY;
+    if (domainB !== domainA) {
+      return domainB - domainA;
+    }
+    return a.user_id.localeCompare(b.user_id);
+  });
+
+  const results: CandidateScore[] = unsorted.map((entry, index) => ({
+    user_id: entry.user_id,
+    s_domain: entry.s_domain !== null ? roundScore(entry.s_domain) : null,
+    s_task: entry.s_task !== null ? roundScore(entry.s_task) : null,
+    final: roundScore(entry.finalRaw),
+    rank: index + 1,
+  }));
+
+  const countGteThreshold =
+    threshold !== undefined ? unsorted.filter((entry) => entry.finalRaw >= threshold).length : undefined;
+
+  const merged: MergeScoresResult = {
+    results,
+    missingDomain,
+    missingTask,
+  };
+
+  if (countGteThreshold !== undefined) {
+    merged.countGteThreshold = countGteThreshold;
   }
+
+  return merged;
+}
+
+async function queryScoresForSection(options: {
+  section: Channel;
+  vector: number[];
+  candidateChunks: string[][];
+  topK: number;
+  namespace?: string;
+  requestId: string;
+}): Promise<Map<string, number>> {
+  const { section, vector, candidateChunks, topK, namespace, requestId } = options;
+  const aggregate = new Map<string, number>();
+
+  for (const chunk of candidateChunks) {
+    if (chunk.length === 0) {
+      continue;
+    }
+
+    const chunkTopK = Math.min(chunk.length, topK);
+    if (chunkTopK <= 0) {
+      continue;
+    }
+
+    try {
+      const queryOptions: Parameters<typeof queryByVector>[0] = {
+        values: vector,
+        topK: chunkTopK,
+        filter: {
+          type: 'user',
+          section,
+          user_id: { $in: chunk },
+        },
+      };
+
+      if (namespace) {
+        queryOptions.namespace = namespace;
+      }
+
+      const matches = await queryByVector(queryOptions);
+      const chunkScores = extractScores(matches);
+      for (const [userId, score] of chunkScores.entries()) {
+        const existing = aggregate.get(userId);
+        if (existing === undefined || score > existing) {
+          aggregate.set(userId, score);
+        }
+      }
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw new AppError({
+          code: 'PINECONE_FAILURE',
+          statusCode: 502,
+          message: `Timed out querying Pinecone (${section}). Try again.`,
+          details: {
+            phase: `query.${section}`,
+            request_id: requestId,
+            cause: {
+              code: error.code,
+            },
+          },
+        });
+      }
+      throw error;
+    }
+  }
+
+  return aggregate;
 }
 
 export const matchRoutes: FastifyPluginAsync = async (fastify) => {
   const serviceApiKey = requireEnv('SERVICE_API_KEY');
+  const jobsNamespace = getEnv('PINECONE_JOBS_NAMESPACE');
+  const usersNamespace = getEnv('PINECONE_USERS_NAMESPACE');
 
   fastify.post('/v1/match/score_users_for_job', async (request, reply) => {
     const requestId = request.id as string;
@@ -69,101 +245,135 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
       const parsed = scoreRequestSchema.safeParse(request.body);
       if (!parsed.success) {
         throw new AppError({
-          code: 'VALIDATION_ERROR',
+          code: 'BAD_REQUEST',
           statusCode: 400,
           message: 'Invalid request body',
           details: { issues: parsed.error.issues },
         });
       }
 
-      const { job_id, candidate_user_ids } = parsed.data;
+      const { job_id, candidate_user_ids, threshold } = parsed.data;
       const uniqueCandidates = Array.from(new Set(candidate_user_ids));
-      const weightDomain = parsed.data.w_domain;
-      const weightTask = parsed.data.w_task;
+      const weights = normalizeWeights(parsed.data.w_domain, parsed.data.w_task);
+
       const requestedTopK = parsed.data.topK ?? uniqueCandidates.length;
-      const topK = Math.max(1, Math.min(requestedTopK, uniqueCandidates.length));
+      const topKCap = Math.min(TOPK_CAP, uniqueCandidates.length);
+      const topK = Math.max(1, Math.min(requestedTopK, topKCap));
 
       const domainVectorId = `job_${job_id}::domain`;
       const taskVectorId = `job_${job_id}::task`;
 
-      const fetched = await fetchVectors([domainVectorId, taskVectorId]);
+      const fetchOptions = jobsNamespace ? { namespace: jobsNamespace } : undefined;
+      let fetched;
+      try {
+        fetched = await fetchVectors([domainVectorId, taskVectorId], fetchOptions);
+      } catch (error) {
+        if (error instanceof AppError) {
+          throw new AppError({
+            code: 'PINECONE_FAILURE',
+            statusCode: 502,
+            message: 'Failed retrieving job vectors from Pinecone. Try again.',
+            details: {
+              phase: 'fetch.job',
+              request_id: requestId,
+              cause: {
+                code: error.code,
+              },
+            },
+          });
+        }
+        throw error;
+      }
+
       const domainVector = fetched[domainVectorId]?.values;
       const taskVector = fetched[taskVectorId]?.values;
 
-      ensureVectorExists(domainVector, domainVectorId);
-      ensureVectorExists(taskVector, taskVectorId);
-
-      let domainScores = new Map<string, number>();
-      let taskScores = new Map<string, number>();
-
-      if (weightDomain > 0) {
-        const domainMatches = await queryByVector({
-          values: domainVector,
-          topK,
-          filter: buildFilter('domain', uniqueCandidates),
+      if (!isValidVector(domainVector) || !isValidVector(taskVector)) {
+        throw new AppError({
+          code: 'JOB_VECTORS_MISSING',
+          statusCode: 404,
+          message: 'Job vectors not found; upsert job first via /v1/jobs/upsert.',
         });
-        domainScores = extractScores(domainMatches);
       }
 
-      if (weightTask > 0) {
-        const taskMatches = await queryByVector({
-          values: taskVector,
+      const candidateChunks = chunkArray(uniqueCandidates, FILTER_CHUNK_SIZE);
+
+      const sectionNamespace: { namespace?: string } = usersNamespace ? { namespace: usersNamespace } : {};
+      const [domainScores, taskScores] = await Promise.all([
+        queryScoresForSection({
+          section: 'domain',
+          vector: domainVector,
+          candidateChunks,
           topK,
-          filter: buildFilter('task', uniqueCandidates),
-        });
-        taskScores = extractScores(taskMatches);
-      }
+          requestId,
+          ...sectionNamespace,
+        }),
+        queryScoresForSection({
+          section: 'task',
+          vector: taskVector,
+          candidateChunks,
+          topK,
+          requestId,
+          ...sectionNamespace,
+        }),
+      ]);
 
-      const results: ScoreEntry[] = uniqueCandidates.map((userId) => {
-        const domainScore = domainScores.get(userId) ?? 0;
-        const taskScore = taskScores.get(userId) ?? 0;
-        const finalScore = weightDomain * domainScore + weightTask * taskScore;
-        return {
-          user_id: userId,
-          s_domain: Number(domainScore.toFixed(5)),
-          s_task: Number(taskScore.toFixed(5)),
-          final: Number(finalScore.toFixed(5)),
-        };
-      });
-
-      results.sort((a, b) => b.final - a.final);
-
-      const threshold = parsed.data.threshold;
-      const countGteThreshold =
-        threshold !== undefined
-          ? results.filter((entry) => entry.final >= threshold).length
-          : undefined;
+      const merged = mergeScores(candidate_user_ids, domainScores, taskScores, weights, threshold);
 
       const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Math.round(elapsedMs);
 
       log.info(
         {
           event: 'match.score.complete',
           jobId: job_id,
-          candidateCount: uniqueCandidates.length,
-          elapsedMs: Number(elapsedMs.toFixed(2)),
+          candidateCount: candidate_user_ids.length,
+          uniqueCandidateCount: uniqueCandidates.length,
+          topK,
+          weights,
+          missingDomain: merged.missingDomain.length,
+          missingTask: merged.missingTask.length,
+          elapsedMs: elapsedRounded,
+          scoreFormula: SCORE_FORMULA,
         },
-        'Computed manual job match scores'
+        'Computed job applicant scores'
       );
 
-      return reply.status(200).send({
+      const responseBody: Record<string, unknown> = {
         status: 'ok',
         job_id,
-        w_domain: weightDomain,
-        w_task: weightTask,
-        threshold_used: threshold,
-        results,
-        count_gte_threshold: countGteThreshold,
-      });
+        w_domain: roundScore(weights.domain),
+        w_task: roundScore(weights.task),
+        results: merged.results,
+        missing_vectors: {
+          domain: merged.missingDomain,
+          task: merged.missingTask,
+        },
+        elapsed_ms: elapsedRounded,
+      };
+
+      if (threshold !== undefined) {
+        responseBody.threshold_used = threshold;
+        responseBody.count_gte_threshold = merged.countGteThreshold ?? 0;
+      }
+
+      return reply.status(200).send(responseBody);
     } catch (error) {
       const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-      const elapsedRounded = Number(elapsedMs.toFixed(2));
+      const elapsedRounded = Math.round(elapsedMs);
+
       if (error instanceof AppError) {
         request.log.warn(
-          { error: error.message, code: error.code, details: error.details, event: 'match.score.error', elapsedMs: elapsedRounded },
+          {
+            error: error.message,
+            code: error.code,
+            details: error.details,
+            event: 'match.score.error',
+            elapsedMs: elapsedRounded,
+          },
           'Handled job scoring error'
         );
-        return reply.status(error.statusCode).send(toErrorResponse(error));
+        return reply.status(error.statusCode).send({ ...toErrorResponse(error), request_id: requestId });
       }
 
       request.log.error({ err: error, event: 'match.score.error', elapsedMs: elapsedRounded }, 'Unexpected error during job scoring');
@@ -172,7 +382,7 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
         statusCode: 500,
         message: 'Unexpected server error',
       });
-      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+      return reply.status(appError.statusCode).send({ ...toErrorResponse(appError), request_id: requestId });
     }
   });
 };

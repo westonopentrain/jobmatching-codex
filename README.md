@@ -37,6 +37,8 @@ Copy `.env.example` to `.env` during local development and provide the following
 | `PINECONE_API_KEY` | ✅ | Pinecone API key. |
 | `PINECONE_INDEX` | ✅ | Pinecone index name (e.g., `freelancers_v2`). Must be cosine, 3072-dim. |
 | `PINECONE_HOST` | ✅ | Serverless host URL for the index (e.g., `freelancers_v2-xxxxxx.svc.us-east1-aws.pinecone.io`). |
+| `PINECONE_USERS_NAMESPACE` | ➖ | Optional namespace override for user vectors when your index stores multiple collections. |
+| `PINECONE_JOBS_NAMESPACE` | ➖ | Optional namespace override for job vectors. |
 | `PINECONE_ENV` | ➖ | Legacy controller host fallback. Only use if `PINECONE_HOST` is temporarily unavailable. |
 | `SERVICE_API_KEY` | ✅ | Bearer token Bubble must send with every request. |
 | `OPENAI_CAPSULE_MODEL` | ➖ | Optional chat model override for capsule generation. Defaults to `gpt-4o-mini` when unset. |
@@ -203,15 +205,32 @@ The response mirrors the user endpoint (`status: "ok"`, capsule texts, vector ID
 
 ### `POST /v1/match/score_users_for_job`
 
-Scores a single job against a fixed candidate list using manual weights.
+Scores a provided list of applicants against a job using two Pinecone queries (domain and task channels). The service normalizes `w_domain`/`w_task`, blends similarities, and returns every requested user sorted by the final score.
+
+**Request fields**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `job_id` | string | Job identifier (matches the ID used during `/v1/jobs/upsert`). |
+| `candidate_user_ids` | string[] | Required list of applicant IDs to score (1-50k). |
+| `w_domain` | number | Optional weight for the domain channel (default `1.0`). |
+| `w_task` | number | Optional weight for the task channel (default `0.0`). |
+| `topK` | number | Optional Pinecone `topK` override. Defaults to the candidate count (server-capped at 10k). |
+| `threshold` | number | Optional cutoff for Bubble’s UI. The response includes `count_gte_threshold` when supplied. |
+
+**Response highlights**
+
+- Each user entry includes `s_domain`, `s_task`, `final`, and a deterministic `rank`.
+- Missing vectors are surfaced under `missing_vectors.domain` / `.task` so Bubble can re-upsert as needed.
+- `w_domain`/`w_task` reflect normalized weights; scores are rounded to 6 decimal places.
 
 ```bash
 curl -X POST "$SERVICE_URL/v1/match/score_users_for_job" \
   -H "Authorization: Bearer $SERVICE_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "job_id":"j_obgyn",
-    "candidate_user_ids":["u_1","u_2","u_3"],
+    "job_id":"1733994253353x683525100278382600",
+    "candidate_user_ids":["u_101","u_102","u_103","u_104"],
     "w_domain":1.0,
     "w_task":0.0,
     "threshold":0.82
