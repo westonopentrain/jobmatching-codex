@@ -124,11 +124,13 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
           vector_id: domainVectorId,
           capsule_text: capsules.domain.text,
           chars: capsules.domain.text.length,
+          keywords: capsules.domain.keywords ?? [],
         },
         task: {
           vector_id: taskVectorId,
           capsule_text: capsules.task.text,
           chars: capsules.task.text.length,
+          keywords: capsules.task.keywords ?? [],
         },
         updated_at: now,
         elapsed_ms: Number(elapsedMs.toFixed(2)),
