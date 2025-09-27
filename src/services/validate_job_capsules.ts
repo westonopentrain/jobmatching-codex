@@ -80,6 +80,77 @@ const DOMAIN_SOFT_TERMS = [
   'budgets',
   'cost',
   'costs',
+  'flexible schedule',
+  'flexibility',
+  'availability requirements',
+  'writing skills',
+  'english writing',
+  'strong writing',
+  'priority',
+  'opportunity',
+  'opportunities',
+  'project',
+  'projects',
+  'detail-oriented',
+  'detail oriented',
+  'clarity',
+  'clear communication',
+];
+
+const DOMAIN_HIRING_TERMS = [
+  'posted',
+  'posting',
+  'post',
+  'seeking',
+  'looking for',
+  'candidates',
+  'candidate',
+  'hiring',
+  'hire',
+  'availability',
+  'available hours',
+  'availability per week',
+  'availability requirement',
+  'hours per week',
+  'per week',
+  'schedule',
+  'schedules',
+  'applicants',
+  'application',
+  'apply',
+  'opentrain',
+  'help train',
+  'train',
+  'training program',
+  'program',
+  'priority given',
+  'priority to',
+  'workload',
+  'work load',
+  'project',
+  'projects',
+  'opportunity',
+  'opportunities',
+  'budget',
+  'pay',
+  'compensation',
+  'salary',
+  'rate',
+  'per hour',
+  'usd',
+  'dollar',
+  'dollars',
+  'preferred availability',
+  'preferred hours',
+  'location requirement',
+  'countries',
+  'country',
+  'remote',
+  'onsite',
+  'english level',
+  'fluency',
+  'fluent',
+  'language requirement',
 ];
 
 const TASK_LOGISTICS_TERMS = [
@@ -92,6 +163,9 @@ const TASK_LOGISTICS_TERMS = [
   'available hours',
   'schedule',
   'scheduling',
+  'flexible schedule',
+  'flexible hours',
+  'flexibility',
   'time requirement',
   'weekly hours',
   'hourly rate',
@@ -113,7 +187,20 @@ const TASK_LOGISTICS_TERMS = [
   'compensation',
   'salary',
   'benefits',
+  'applicants',
+  'candidates',
+  'posted',
+  'posting',
+  'opentrain',
+  'priority',
+  'availability requirement',
+  'location requirement',
+  'countries',
+  'language requirement',
 ];
+
+const REPETITION_MIN_WORD_LENGTH = 4;
+const REPETITION_THRESHOLD = 4;
 
 const ANGLE_BRACKET_REGEX = /[<>]/;
 const BULLET_REGEX = /(^|\n)\s*[-•]/;
@@ -176,6 +263,27 @@ function hasBlockedTerm(text: string, terms: string[]): boolean {
     const regex = new RegExp(`\\b${escapeRegExp(normalized)}\\b`, 'i');
     return regex.test(text);
   });
+}
+
+function hasExcessiveWordRepetition(text: string): boolean {
+  const matches = text.toLowerCase().match(/\b[a-z0-9][a-z0-9+/'&.-]*\b/g);
+  if (!matches) {
+    return false;
+  }
+
+  const counts = new Map<string, number>();
+  for (const token of matches) {
+    if (token.length < REPETITION_MIN_WORD_LENGTH) {
+      continue;
+    }
+    const nextCount = (counts.get(token) ?? 0) + 1;
+    if (nextCount >= REPETITION_THRESHOLD) {
+      return true;
+    }
+    counts.set(token, nextCount);
+  }
+
+  return false;
 }
 
 function countWords(text: string): number {
@@ -338,8 +446,14 @@ async function enforceDomainCapsule(
     if (hasBlockedTerm(current, DOMAIN_SOFT_TERMS)) {
       directives.push('Remove soft/logistics/meta terms; keep only domain nouns from DOMAIN_EVIDENCE.');
     }
+    if (hasBlockedTerm(current, DOMAIN_HIRING_TERMS)) {
+      directives.push('Remove hiring/logistics/marketing language; keep only subject-matter nouns and credentials from DOMAIN_EVIDENCE.');
+    }
     if (countWords(current) > 200) {
       directives.push('Keep the paragraph under 200 words.');
+    }
+    if (hasExcessiveWordRepetition(current)) {
+      directives.push('Remove repeated words or filler loops; write 1-2 dense sentences using distinct domain tokens only.');
     }
 
     const matches = computeEvidenceKeywords(current, evidenceTerms, KEYWORD_MAX);
@@ -383,6 +497,9 @@ async function enforceTaskCapsule(
     }
     if (countWords(current) > 220) {
       directives.push('Keep the paragraph under 220 words.');
+    }
+    if (hasExcessiveWordRepetition(current)) {
+      directives.push('Remove repeated words or chant-like sequences; describe the workflow in 2-3 precise sentences using distinct TASK_EVIDENCE tokens.');
     }
 
     const matches = computeEvidenceKeywords(current, evidenceTerms, KEYWORD_MAX);

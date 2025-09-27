@@ -107,6 +107,27 @@ Keywords: freelance, schedule, pay`;
     expect(result).not.toContain('pay');
   });
 
+  it('strips hiring and marketing language from domain capsule', async () => {
+    const raw = `OpenTrain is seeking candidates for an OBGYN project, prioritizing availability, flexible schedules, and strong English writing to support patients with clarity.
+Keywords: seeking, candidates, availability`;
+
+    const cleanedParagraph =
+      "The role concentrates on obstetrics and gynecology / OB-GYN depth across maternal-fetal medicine, prenatal care, labor and delivery, gynecologic surgery, obstetric ultrasound, and ongoing MD residency-backed clinical practice in women's health.";
+
+    const rewrite: RewriteCapsuleFn = vi
+      .fn()
+      .mockResolvedValue(cleanedParagraph);
+
+    const result = await validateDomainCapsuleText(raw, { evidence: obgynDomainEvidence }, { rewrite });
+
+    expect(rewrite).toHaveBeenCalled();
+    const directive = rewrite.mock.calls[0]?.[1] ?? '';
+    expect(directive).toContain('hiring/logistics/marketing language');
+    expect(result.toLowerCase()).not.toContain('seeking');
+    expect(result.toLowerCase()).not.toContain('candidates');
+    expect(result.toLowerCase()).not.toContain('availability');
+  });
+
   it('returns clean keywords without invoking rewrite when text is compliant', async () => {
     const codingDomain: DomainEvidence = {
       tokens: ['html', 'css', 'javascript', 'react', 'wcag', 'front-end', 'responsive', 'design', 'inclusive', 'systems'],
@@ -174,5 +195,24 @@ Keywords: prompts, evaluation`;
     const result = await validateTaskCapsuleText(raw, { evidence: obgynTaskEvidence }, { rewrite });
     expect(rewrite).toHaveBeenCalled();
     expect(result).not.toContain('<');
+  });
+
+  it('rewrites chant-like task capsules that repeat the same words', async () => {
+    const raw = `Labeling evaluation workflow labeling evaluation workflow labeling evaluation workflow labeling evaluation workflow.
+Keywords: labeling, evaluation`;
+
+    const cleanedTask =
+      'Specialists run evaluation rating workflows, craft prompt writing and response writing exemplars, execute supervised fine-tuning (SFT) rubric reviews, and perform annotation review plus quality review audits across the medical text modality dataset.';
+
+    const rewrite: RewriteCapsuleFn = vi
+      .fn()
+      .mockResolvedValue(cleanedTask);
+
+    const result = await validateTaskCapsuleText(raw, { evidence: obgynTaskEvidence }, { rewrite });
+
+    expect(rewrite).toHaveBeenCalled();
+    const directive = rewrite.mock.calls[0]?.[1] ?? '';
+    expect(directive).toContain('chant-like');
+    expect(result.toLowerCase()).not.toContain('labeling evaluation workflow labeling');
   });
 });
