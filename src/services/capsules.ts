@@ -1,4 +1,3 @@
-import { getOpenAIClient } from './openai-client';
 import { NormalizedUserProfile, CapsulePair } from '../utils/types';
 import { joinWithLineBreak } from '../utils/sanitize';
 import { withRetry } from '../utils/retry';
@@ -7,6 +6,7 @@ import { logger } from '../utils/logger';
 import { extractLabelingEvidence, LabelingEvidenceResult } from '../utils/evidence';
 import { validateDomainCapsule, validateTaskCapsule } from './validate';
 import { resolveCapsuleModel } from './openai-model';
+import { createTextResponse } from './openai-responses';
 
 const CAPSULE_TEMPERATURE = 0.2;
 export const CAPSULE_SYSTEM_MESSAGE =
@@ -151,22 +151,14 @@ export async function generateCapsules(profile: NormalizedUserProfile): Promise<
   const evidence = extractLabelingEvidence(evidenceSource);
   const prompt = buildCapsulePrompt(profile, evidence);
   const evidenceSet = new Set([...evidence.tokens, ...evidence.phrases]);
-  const client = getOpenAIClient();
-
   const capsuleModel = resolveCapsuleModel();
 
-  const completion = await withRetry(() =>
-    client.chat.completions.create({
+  const responseText = await withRetry(() =>
+    createTextResponse({
       model: capsuleModel,
       messages: [
-        {
-          role: 'system',
-          content: CAPSULE_SYSTEM_MESSAGE,
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
+        { role: 'system', content: CAPSULE_SYSTEM_MESSAGE },
+        { role: 'user', content: prompt },
       ],
       temperature: CAPSULE_TEMPERATURE,
     })
@@ -182,8 +174,7 @@ export async function generateCapsules(profile: NormalizedUserProfile): Promise<
     });
   });
 
-  const content = completion.choices?.[0]?.message?.content;
-  if (!content) {
+  if (!responseText) {
     throw new AppError({
       code: 'LLM_FAILURE',
       statusCode: 502,
@@ -191,7 +182,7 @@ export async function generateCapsules(profile: NormalizedUserProfile): Promise<
     });
   }
 
-  const capsules = extractCapsuleTexts(content);
+  const capsules = extractCapsuleTexts(responseText);
 
   const domainValidation = await validateDomainCapsule(capsules.domain.text);
   const validation = validateTaskCapsule(capsules.task.text, evidenceSet);
