@@ -6,58 +6,196 @@ import { CapsulePair, NormalizedJobPosting, UpsertJobRequest } from '../utils/ty
 import { createTextResponse } from './openai-responses';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
-  'You produce two concise, high-precision capsules for vector search from a job posting. \nCapsules must be grammatical sentences (no bullet lists, no angle brackets, no telegraph style).\nYou must output only valid JSON following the given schema; do not include commentary or explanation. \nUse only facts present in the job text. Do not invent.\nBe PII-safe: do not include company names or personal names.';
+  'You produce two concise, high-precision capsules for vector search from a job posting.\nCapsules must be grammatical sentences only (no bullet lists, no angle brackets, no telegraph style).\nUse only facts present in the job text. Do not invent tools, tasks, or domains.\nBe PII-safe: do not include company names or personal names.\nReturn strictly valid JSON; no commentary or extra text outside the JSON.';
 
 const CAPSULE_TEMPERATURE = 0.2;
+const CAPSULE_FREQUENCY_PENALTY = 0.5;
+const CAPSULE_PRESENCE_PENALTY = 0;
+const CAPSULE_MAX_OUTPUT_TOKENS = 800;
 
-const JOB_CAPSULE_USER_MESSAGE = `You must return JSON with this exact schema:
+const KEYWORD_MIN_COUNT = 10;
+
+const DOMAIN_DISALLOWED_TOKENS = [
+  'text',
+  'dataset',
+  'file',
+  'files',
+  'software',
+  'labeling',
+  'annotation',
+  'evaluation',
+  'rating',
+  'prompt',
+  'response',
+  'sft',
+  'rlhf',
+  'dpo',
+  'qa',
+  'healthcare',
+  'medical content',
+  'posted',
+  'seeking',
+  'candidate',
+  'candidates',
+  'applicant',
+  'applicants',
+  'availability',
+  'schedule',
+  'hours',
+  'budget',
+  'rate',
+  'pay',
+  'countries',
+  'english level',
+  'labels per file',
+  'total labels',
+  'number of labelers',
+  'opportunity',
+];
+
+const TASK_DISALLOWED_TOKENS = [
+  'text',
+  'dataset',
+  'files',
+  'labels',
+  'label',
+  'labeling software',
+  'software',
+  'posted',
+  'seeking',
+  'candidate',
+  'candidates',
+  'applicant',
+  'applicants',
+  'availability',
+  'schedule',
+  'budget',
+  'rate',
+  'pay',
+  'countries',
+  'english level',
+  'labels per file',
+  'total labels',
+  'number of labelers',
+  'company names',
+];
+
+const DOMAIN_DISALLOWED_SET = new Set(DOMAIN_DISALLOWED_TOKENS.map((token) => token.toLowerCase()));
+const TASK_DISALLOWED_SET = new Set(TASK_DISALLOWED_TOKENS.map((token) => token.toLowerCase()));
+
+const KEYWORD_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'by',
+  'for',
+  'from',
+  'in',
+  'into',
+  'is',
+  'of',
+  'on',
+  'or',
+  'the',
+  'to',
+  'with',
+  'without',
+  'within',
+  'across',
+  'through',
+  'throughout',
+  'per',
+  'via',
+  'using',
+  'use',
+  'while',
+  'when',
+  'where',
+  'which',
+  'that',
+  'this',
+  'these',
+  'those',
+  'their',
+  'its',
+  'will',
+  'must',
+  'should',
+  'can',
+  'may',
+  'including',
+  'include',
+  'ensuring',
+  'ensure',
+  'ensures',
+  'providing',
+  'provide',
+  'requires',
+  'require',
+  'requirement',
+  'requirements',
+  'preferred',
+  'priority',
+  'project',
+  'role',
+  'candidates',
+  'candidate',
+  'applicants',
+  'applicant',
+  'availability',
+  'schedule',
+  'hours',
+]);
+
+const JOB_CAPSULE_USER_MESSAGE = `Return JSON with this exact shape:
 
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<1–2 sentences, 60–120 words, subject-matter ONLY>",
-    "keywords": ["<10–16 distinct domain nouns>"]
+    "text": "<1-2 sentences, 60-110 words, subject-matter ONLY>",
+    "keywords": ["<10-16 distinct domain nouns>"]
   },
   "task_capsule": {
-    "text": "<1 paragraph, 80–140 words, AI/LLM data work ONLY>",
-    "keywords": ["<10–16 distinct task/tool/label/modality/workflow nouns>"]
+    "text": "<1 paragraph, 90-140 words, AI/LLM data work ONLY>",
+    "keywords": ["<10-16 distinct task/tool/label/modality/workflow nouns>"]
   }
 }
 
-DEFINITIONS & RULES
-
-GENERAL
-- Use ONLY facts in JOB_TEXT. Do not invent tools, tasks, or domains.
-- Sentences only (no lists, no angle brackets, no headings).
-- Avoid generic filler: do not include “posted”, “seeking”, “candidates”, “opportunity”, “flexible schedule”, “availability”, “budget”, “rate”, “pay”, “hours”, “countries”, “English level”, “labels per file”, “total labels”, “number of labelers”, or company names (e.g., remove “OpenTrain”).
-- Keywords must be distinct noun or noun-phrase tokens that appear verbatim in BOTH (a) the capsule text and (b) JOB_TEXT. 
-- Do not include numbers, months, or vague meta words in keywords (e.g., avoid “five”, “minimum”, “accuracy”, “clarity”, “audience”, “resource”, “reliability”, “accessibility”).
-- Lowercase keywords unless they are standard acronyms or proper domain abbreviations (e.g., “OB‑GYN”, “MD”, “SFT”, “RLHF”).
+GLOBAL RULES
+- Use ONLY facts in JOB_TEXT. Do NOT invent.
+- Sentences only. No lists, no angle brackets, no headings, no telegraph notes.
+- Avoid logistics/marketing/HR content: do not include "posted", "seeking", "candidates", "opportunity", "availability", "schedule", "time requirement", "hours", "countries", "English level", "budget", "rate", "pay", "labels per file", "total labels", "number of labelers". Do not include company names.
+- Avoid generic soft/meta words: "accuracy", "clarity", "empathy", "audience", "resource", "reliability", "accessibility", unless part of a named standard.
+- Keywords must be distinct noun(-phrase) tokens that already appear verbatim in BOTH the capsule text and JOB_TEXT. Lowercase keywords unless standard acronyms (e.g., "OB-GYN", "MD", "SFT", "RLHF"). No numbers, no duplicates, no verbs in keywords.
 
 DOMAIN CAPSULE (subject-matter ONLY)
-- Purpose: encode the job’s hard subject-matter requirements so specialists cluster together.
-- Include ONLY subject-matter nouns actually present in JOB_TEXT: specialties, subdisciplines, procedures, instruments, imaging modalities, credentials/licenses (e.g., MD, board-certified), formal training (residency/fellowship), standards/frameworks, domain-specific data types.
-- EXCLUDE: AI/LLM annotation terms (annotation, labeling, NER, OCR, bbox, polygon, transcription, prompt, SFT, RLHF, DPO, “Label Studio”, “CVAT”), hiring/marketing/logistics/pay/schedule/country/language level, soft-skill meta (accuracy, clarity, empathy).
-- Form: 1–2 sentences, 60–120 words. 
-- Keywords: 10–16 distinct domain tokens drawn from the domain sentences (e.g., “obstetrics and gynecology”, “maternal‑fetal medicine”, “obstetric ultrasound”, “gynecologic surgery”, “labor and delivery”, “MD”, “residency”, “women’s health”). No duplicates; no junk.
+- Purpose: encode the job's hard subject-matter requirements so specialists cluster together.
+- Include ONLY subject-matter nouns actually in JOB_TEXT: specialties, subdisciplines, procedures, instruments, imaging modalities, credentials/licenses (MD, board-certified), formal training (residency/fellowship), standards/frameworks, domain-specific data types.
+- EXCLUDE: any AI/LLM annotation/training/evaluation terms (annotation, labeling, label, NER, OCR, bbox, polygon, transcription, prompt, response, SFT, RLHF, DPO, "Label Studio", "CVAT"), generic/logistics tokens (text, dataset, files, software), marketing/HR content, soft/meta words. Do not include "healthcare" or "medical content" unless those exact broad domains are the true requirement. For clinical roles, prefer the precise specialty nouns (e.g., "obstetrics and gynecology / OB-GYN", "maternal-fetal medicine", "obstetric ultrasound", "gynecologic surgery").
+- Form: 1-2 sentences, 60-110 words.
+- Keywords: 10-16 distinct domain tokens from the capsule sentences and JOB_TEXT (e.g., "obstetrics and gynecology", "OB-GYN", "maternal-fetal medicine", "prenatal care", "labor and delivery", "gynecologic surgery", "obstetric ultrasound", "MD", "residency", "women's health"). No logistics or task tokens in domain keywords.
 
 TASK CAPSULE (AI/LLM data work ONLY)
-- Purpose: encode the job’s labeling/training/evaluation work so skills matchers retrieve the right people.
-- Include ONLY AI/LLM data work explicitly present in JOB_TEXT: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), tools/platforms (name only if present), workflows (SFT, RLHF, DPO), rubric/QA/consistency checks, prompt/response writing, benchmark/eval dataset creation.
-- Keep domain nouns minimal and only when directly tied to a task (e.g., “medical content evaluation”). 
-- EXCLUDE: hiring/marketing/logistics/pay/schedule/country/language level, headcount, file counts, “labels per file”, company names.
-- Form: 1 paragraph, 80–140 words. Do not repeat the same token more than once unless it is part of a standard acronym or necessary noun phrase.
-- Keywords: 10–16 distinct task/tool/label/modality/workflow tokens drawn from the task paragraph (e.g., “evaluation”, “rating”, “rubric”, “prompt writing”, “response writing”, “supervised fine‑tuning”, “SFT”, “text modality”, “annotation QA”). No duplicates; no junk.
+- Purpose: encode the job's labeling/training/evaluation work so skills matchers retrieve the right people.
+- Include ONLY AI/LLM data work explicitly present in JOB_TEXT: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), tools/platforms (only if named), workflows (SFT, RLHF, DPO), rubric/QA/consistency checks, prompt/response writing, benchmark or evaluation dataset creation.
+- Keep domain nouns minimal and only when directly tied to a task (e.g., "medical content evaluation", "code annotation"). Do not re-list domain specialties here.
+- EXCLUDE: logistics/HR/marketing/pay/schedule/country/language level, file counts, "labels per file", company names. Do not rely on generic tokens like "text", "dataset", "files", "labels" as keywords; if needed, prefer a precise noun like "text modality".
+- Form: a single paragraph, 90-140 words. Do not repeat the same token more than once unless it is a standard acronym (e.g., SFT).
+- Keywords: 10-16 distinct task/tool/label/modality/workflow tokens from the paragraph and JOB_TEXT (e.g., "evaluation", "rating", "rubric", "prompt writing", "response writing", "supervised fine-tuning", "SFT", "text modality", "annotation QA", "consistency review"). No logistics words.
 
-IF NO TASK EVIDENCE
+IF NO AI/LLM TASK EVIDENCE
 - If JOB_TEXT contains no explicit AI/LLM labeling/training/evaluation details, set:
   task_capsule.text = "No AI/LLM data-labeling, model training, or evaluation requirements are stated in this job."
   task_capsule.keywords = ["none"]
 
 OUTPUT CONSTRAINTS
-- Output strictly valid JSON (UTF-8, no trailing commas).
-- Do not include any fields other than the schema above.
-- Ensure every keyword appears verbatim in both the capsule text and JOB_TEXT (except “none” case).
+- Return strictly valid JSON matching the schema above (UTF-8, no trailing commas).
+- Do not include any extra fields.
+- Ensure every keyword appears verbatim in both the capsule text and JOB_TEXT (except "none" case).
 
 JOB_TITLE: {{JOB_TITLE}}
 JOB_TEXT:
@@ -74,6 +212,112 @@ interface JobCapsuleModelResponse {
   job_id: string;
   domain_capsule: CapsuleSection;
   task_capsule: CapsuleSection;
+}
+
+function escapeRegExp(token: string): string {
+  return token.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+}
+
+function sanitizeCapsuleText(text: string, tokens: string[]): string {
+  let sanitized = text;
+  for (const token of tokens) {
+    const pattern = new RegExp(`(?<!\\S)${escapeRegExp(token)}(?!\\S)`, 'gi');
+    sanitized = sanitized.replace(pattern, ' ');
+  }
+
+  sanitized = sanitized.replace(/\s{2,}/g, ' ');
+  sanitized = sanitized.replace(/\s+([,.;:!?])/g, '$1');
+  sanitized = sanitized.replace(/([,.;:!?])(?!\s|$)/g, '$1 ');
+  sanitized = sanitized.replace(/\s{2,}/g, ' ').trim();
+
+  if (sanitized.length === 0) {
+    return text.trim();
+  }
+
+  return sanitized;
+}
+
+function extractCandidateTokens(text: string): string[] {
+  const results: string[] = [];
+  const seen = new Set<string>();
+  const regex = /\b[^\s,.;:!?()]+(?:\s+[^\s,.;:!?()]+){0,3}/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    const candidate = match[0].trim();
+    if (!candidate || candidate.length < 3) {
+      continue;
+    }
+
+    const normalized = candidate.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+
+    const words = normalized.split(/\s+/);
+    if (words.every((word) => KEYWORD_STOPWORDS.has(word))) {
+      continue;
+    }
+
+    results.push(candidate);
+    seen.add(normalized);
+  }
+
+  return results;
+}
+
+function filterKeywords(
+  keywords: string[],
+  text: string,
+  disallowedSet: Set<string>,
+  minCount: number
+): string[] {
+  if (keywords.length === 1 && keywords[0].trim().toLowerCase() === 'none') {
+    return ['none'];
+  }
+
+  const sanitizedKeywords: string[] = [];
+  const seen = new Set<string>();
+
+  for (const keyword of keywords) {
+    const trimmed = keyword.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const normalized = trimmed.toLowerCase();
+    if (disallowedSet.has(normalized)) {
+      continue;
+    }
+
+    if (seen.has(normalized)) {
+      continue;
+    }
+
+    sanitizedKeywords.push(trimmed);
+    seen.add(normalized);
+  }
+
+  if (sanitizedKeywords.length >= minCount) {
+    return sanitizedKeywords;
+  }
+
+  const candidates = extractCandidateTokens(text);
+  for (const candidate of candidates) {
+    if (sanitizedKeywords.length >= minCount) {
+      break;
+    }
+
+    const normalized = candidate.toLowerCase();
+    if (disallowedSet.has(normalized) || seen.has(normalized)) {
+      continue;
+    }
+
+    sanitizedKeywords.push(candidate);
+    seen.add(normalized);
+  }
+
+  return sanitizedKeywords;
 }
 
 class CapsuleResponseError extends Error {
@@ -252,6 +496,9 @@ async function callJobCapsuleModel(userPrompt: string): Promise<string> {
     createTextResponse({
       model: capsuleModel,
       temperature: CAPSULE_TEMPERATURE,
+      frequencyPenalty: CAPSULE_FREQUENCY_PENALTY,
+      presencePenalty: CAPSULE_PRESENCE_PENALTY,
+      maxOutputTokens: CAPSULE_MAX_OUTPUT_TOKENS,
       messages: [
         { role: 'system', content: JOB_CAPSULE_SYSTEM_MESSAGE },
         { role: 'user', content: userPrompt },
@@ -318,14 +565,30 @@ async function requestCapsules(job: NormalizedJobPosting): Promise<JobCapsuleMod
 export async function generateJobCapsules(job: NormalizedJobPosting): Promise<CapsulePair> {
   const response = await requestCapsules(job);
 
+  const domainText = sanitizeCapsuleText(response.domain_capsule.text, DOMAIN_DISALLOWED_TOKENS);
+  const domainKeywords = filterKeywords(
+    response.domain_capsule.keywords,
+    domainText,
+    DOMAIN_DISALLOWED_SET,
+    KEYWORD_MIN_COUNT
+  );
+
+  const taskText = sanitizeCapsuleText(response.task_capsule.text, TASK_DISALLOWED_TOKENS);
+  const taskKeywords = filterKeywords(
+    response.task_capsule.keywords,
+    taskText,
+    TASK_DISALLOWED_SET,
+    KEYWORD_MIN_COUNT
+  );
+
   return {
     domain: {
-      text: response.domain_capsule.text,
-      keywords: response.domain_capsule.keywords,
+      text: domainText,
+      keywords: domainKeywords,
     },
     task: {
-      text: response.task_capsule.text,
-      keywords: response.task_capsule.keywords,
+      text: taskText,
+      keywords: taskKeywords,
     },
   };
 }
