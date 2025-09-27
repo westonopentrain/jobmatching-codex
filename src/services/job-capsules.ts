@@ -18,6 +18,30 @@ interface PromptOverrides {
   taskDirective?: string;
 }
 
+function mergeDirective(
+  current: string | undefined,
+  addition: string
+): { text: string | undefined; changed: boolean } {
+  if (!addition.trim()) {
+    return { text: current, changed: false };
+  }
+  if (!current) {
+    return { text: addition, changed: true };
+  }
+  if (current.includes(addition)) {
+    return { text: current, changed: false };
+  }
+  return { text: `${current} ${addition}`.trim(), changed: true };
+}
+
+const DOMAIN_KEYWORD_DIRECTIVE =
+  'Ensure Keywords line only repeats tokens that appear verbatim in the domain capsule paragraph and provided job fields.';
+const TASK_KEYWORD_DIRECTIVE =
+  'Ensure Keywords line only repeats tokens that appear verbatim in the task capsule paragraph and provided job fields.';
+const DOMAIN_AI_DIRECTIVE = 'Remove AI/LLM terms; keep domain nouns only.';
+const TASK_AI_DIRECTIVE =
+  'Remove non-AI duties; keep only AI/LLM labeling/training/eval tasks, tools, labels, modalities, QA.';
+
 function assertHasFields(pairs: Array<[string, string]>): void {
   if (pairs.length === 0) {
     throw new AppError({
@@ -178,25 +202,73 @@ export async function generateJobCapsules(job: NormalizedJobPosting): Promise<Ca
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const capsuleTexts = await requestCapsules(job, overrides);
 
-    const domainValidation = validateJobDomainCapsule(capsuleTexts.domain, job);
-    const taskValidation = validateJobTaskCapsule(capsuleTexts.task, job);
+    let domainValidation;
+    let taskValidation;
 
-    if (domainValidation.needsDomainReprompt && !overrides.domainDirective) {
-      logger.warn(
-        { event: 'job_capsule.domain_reprompt', jobId: job.jobId },
-        'Domain capsule contained AI/LLM terms; requesting rewrite'
-      );
-      overrides = { ...overrides, domainDirective: 'Remove AI/LLM terms; keep domain nouns only.' };
-      continue;
+    try {
+      domainValidation = validateJobDomainCapsule(capsuleTexts.domain, job);
+      taskValidation = validateJobTaskCapsule(capsuleTexts.task, job);
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        error.message === 'Capsule keywords must appear in both capsule text and job fields'
+      ) {
+        const context = error.details?.context as 'domain' | 'task' | undefined;
+        if (context === 'domain') {
+          const { text, changed } = mergeDirective(overrides.domainDirective, DOMAIN_KEYWORD_DIRECTIVE);
+          if (changed) {
+            logger.warn(
+              {
+                event: 'job_capsule.domain_keyword_reprompt',
+                jobId: job.jobId,
+                missing: error.details?.missing,
+              },
+              'Domain capsule keywords missing from capsule or job text; requesting rewrite'
+            );
+            overrides = { ...overrides, domainDirective: text };
+            continue;
+          }
+        } else if (context === 'task') {
+          const { text, changed } = mergeDirective(overrides.taskDirective, TASK_KEYWORD_DIRECTIVE);
+          if (changed) {
+            logger.warn(
+              {
+                event: 'job_capsule.task_keyword_reprompt',
+                jobId: job.jobId,
+                missing: error.details?.missing,
+              },
+              'Task capsule keywords missing from capsule or job text; requesting rewrite'
+            );
+            overrides = { ...overrides, taskDirective: text };
+            continue;
+          }
+        }
+      }
+      throw error;
     }
 
-    if (taskValidation.needsTaskReprompt && !overrides.taskDirective) {
-      logger.warn(
-        { event: 'job_capsule.task_reprompt', jobId: job.jobId },
-        'Task capsule contained non-AI duties; requesting rewrite'
-      );
-      overrides = { ...overrides, taskDirective: 'Remove non-AI duties; keep only AI/LLM labeling/training/eval tasks, tools, labels, modalities, QA.' };
-      continue;
+    if (domainValidation.needsDomainReprompt) {
+      const { text, changed } = mergeDirective(overrides.domainDirective, DOMAIN_AI_DIRECTIVE);
+      if (changed) {
+        overrides = { ...overrides, domainDirective: text };
+        logger.warn(
+          { event: 'job_capsule.domain_reprompt', jobId: job.jobId },
+          'Domain capsule contained AI/LLM terms; requesting rewrite'
+        );
+        continue;
+      }
+    }
+
+    if (taskValidation.needsTaskReprompt) {
+      const { text, changed } = mergeDirective(overrides.taskDirective, TASK_AI_DIRECTIVE);
+      if (changed) {
+        overrides = { ...overrides, taskDirective: text };
+        logger.warn(
+          { event: 'job_capsule.task_reprompt', jobId: job.jobId },
+          'Task capsule contained non-AI duties; requesting rewrite'
+        );
+        continue;
+      }
     }
 
     if (domainValidation.needsDomainReprompt || taskValidation.needsTaskReprompt) {

@@ -267,7 +267,12 @@ function splitCapsule(capsule: string): ParsedCapsule {
   return { body, keywordsLine, keywords };
 }
 
-function ensureKeywordsAppear(keywords: string[], capsuleText: string, jobSource: string): void {
+function ensureKeywordsAppear(
+  context: 'domain' | 'task',
+  keywords: string[],
+  capsuleText: string,
+  jobSource: string
+): void {
   const capsuleTokens = tokenize(capsuleText);
   const jobTokens = tokenize(jobSource);
 
@@ -297,7 +302,7 @@ function ensureKeywordsAppear(keywords: string[], capsuleText: string, jobSource
       code: 'LLM_FAILURE',
       statusCode: 502,
       message: 'Capsule keywords must appear in both capsule text and job fields',
-      details: { missing },
+      details: { missing, context },
     });
   }
 }
@@ -317,7 +322,7 @@ export function validateJobDomainCapsule(
   job: NormalizedJobPosting
 ): JobDomainValidationResult {
   const parsed = splitCapsule(capsule);
-  ensureKeywordsAppear(parsed.keywords, parsed.body, job.sourceText);
+  ensureKeywordsAppear('domain', parsed.keywords, parsed.body, job.sourceText);
 
   const lower = parsed.body.toLowerCase();
   const includesBlocked = DOMAIN_AI_TERMS.some((term) => lower.includes(term));
@@ -333,7 +338,7 @@ export function validateJobTaskCapsule(
   job: NormalizedJobPosting
 ): JobTaskValidationResult {
   const parsed = splitCapsule(capsule);
-  ensureKeywordsAppear(parsed.keywords, parsed.body, job.sourceText);
+  ensureKeywordsAppear('task', parsed.keywords, parsed.body, job.sourceText);
 
   const lower = parsed.body.toLowerCase();
   const includesBlocked = TASK_NON_AI_PHRASES.some((phrase) => lower.includes(phrase));
