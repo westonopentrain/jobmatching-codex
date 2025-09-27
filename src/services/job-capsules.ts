@@ -9,8 +9,6 @@ const JOB_CAPSULE_SYSTEM_MESSAGE =
   'You produce two concise, high-precision capsules for vector search from a job posting.\nCapsules must be grammatical sentences only (no bullet lists, no angle brackets, no telegraph style).\nUse only facts present in the job text. Do not invent tools, tasks, or domains.\nBe PII-safe: do not include company names or personal names.\nReturn strictly valid JSON; no commentary or extra text outside the JSON.';
 
 const CAPSULE_TEMPERATURE = 0.2;
-const CAPSULE_FREQUENCY_PENALTY = 0.5;
-const CAPSULE_PRESENCE_PENALTY = 0;
 const CAPSULE_MAX_OUTPUT_TOKENS = 800;
 
 const KEYWORD_MIN_COUNT = 10;
@@ -272,8 +270,15 @@ function filterKeywords(
   disallowedSet: Set<string>,
   minCount: number
 ): string[] {
-  if (keywords.length === 1 && keywords[0].trim().toLowerCase() === 'none') {
-    return ['none'];
+  if (keywords.length === 0) {
+    return [];
+  }
+
+  if (keywords.length === 1) {
+    const [firstKeyword] = keywords;
+    if (firstKeyword && firstKeyword.trim().toLowerCase() === 'none') {
+      return ['none'];
+    }
   }
 
   const sanitizedKeywords: string[] = [];
@@ -496,8 +501,6 @@ async function callJobCapsuleModel(userPrompt: string): Promise<string> {
     createTextResponse({
       model: capsuleModel,
       temperature: CAPSULE_TEMPERATURE,
-      frequencyPenalty: CAPSULE_FREQUENCY_PENALTY,
-      presencePenalty: CAPSULE_PRESENCE_PENALTY,
       maxOutputTokens: CAPSULE_MAX_OUTPUT_TOKENS,
       messages: [
         { role: 'system', content: JOB_CAPSULE_SYSTEM_MESSAGE },

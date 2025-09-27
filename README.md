@@ -54,10 +54,11 @@ Copy `.env.example` to `.env` during local development and provide the following
    ```bash
    npm install
    ```
-2. Run the Vitest suite:
+2. Run the Vitest suite (this automatically performs a TypeScript type-check so Render build issues surface locally):
    ```bash
    npm test
    ```
+   > The `pretest` hook runs `npm run typecheck` (a `tsc --noEmit` pass) before executing Vitest. This ensures we catch build time type errors—like the ones Render surfaces—during local development.
 3. Build the production bundle:
    ```bash
    npm run build
