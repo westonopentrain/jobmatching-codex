@@ -1,4 +1,3 @@
-import { getOpenAIClient } from './openai-client';
 import { resolveCapsuleModel } from './openai-model';
 import { extractCapsuleTexts } from './capsules';
 import { withRetry } from '../utils/retry';
@@ -12,6 +11,7 @@ import {
   validateDomainCapsuleText,
   validateTaskCapsuleText,
 } from './validate_job_capsules';
+import { createTextResponse } from './openai-responses';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
   'You generate Job Domain and Task capsules for vector search across ANY domain. Be PII-safe. Do not include names. Output sentences only (no angle brackets, no bullets).';
@@ -185,11 +185,10 @@ export function normalizeJobRequest(request: UpsertJobRequest): NormalizedJobPos
 }
 
 async function requestCapsules(job: NormalizedJobPosting, prompt: string): Promise<{ domain: string; task: string }> {
-  const client = getOpenAIClient();
   const capsuleModel = resolveCapsuleModel();
 
-  const completion = await withRetry(() =>
-    client.chat.completions.create({
+  const responseText = await withRetry(() =>
+    createTextResponse({
       model: capsuleModel,
       temperature: CAPSULE_TEMPERATURE,
       messages: [
@@ -209,8 +208,7 @@ async function requestCapsules(job: NormalizedJobPosting, prompt: string): Promi
     });
   });
 
-  const content = completion.choices?.[0]?.message?.content;
-  if (!content) {
+  if (!responseText) {
     throw new AppError({
       code: 'LLM_FAILURE',
       statusCode: 502,
@@ -218,7 +216,7 @@ async function requestCapsules(job: NormalizedJobPosting, prompt: string): Promi
     });
   }
 
-  const capsules = extractCapsuleTexts(content);
+  const capsules = extractCapsuleTexts(responseText);
   return { domain: capsules.domain.text, task: capsules.task.text };
 }
 

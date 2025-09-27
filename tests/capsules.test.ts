@@ -20,22 +20,14 @@ const mockCreate = vi.fn(async (payload: any) => {
     response.assert(payload);
   }
   return {
-    choices: [
-      {
-        message: {
-          content: response.content,
-        },
-      },
-    ],
+    output_text: response.content,
   };
 });
 
 vi.mock('../src/services/openai-client', () => ({
   getOpenAIClient: () => ({
-    chat: {
-      completions: {
-        create: mockCreate,
-      },
+    responses: {
+      create: mockCreate,
     },
   }),
 }));
@@ -149,7 +141,7 @@ describe('generateCapsules integration', () => {
       mockResponses.push({
         content: `${domainText}\n\n${NO_EVIDENCE_TASK_CAPSULE}`,
         assert: (payload) => {
-          expect(payload.messages[0].content).toBe(CAPSULE_SYSTEM_MESSAGE);
+          expect(payload.input[0].content).toBe(CAPSULE_SYSTEM_MESSAGE);
         },
       });
     }
