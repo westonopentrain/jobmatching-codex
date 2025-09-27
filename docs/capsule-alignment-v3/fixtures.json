@@ -1,0 +1,18 @@
+[
+  {
+    "domain": "Corporate law",
+    "job_id": "job_corporate_law_alignment_v3",
+    "profile_id": "user_corporate_law_sme",
+    "before_similarity": 0.59,
+    "after_similarity": 0.73,
+    "notes": "After applying canonical subareas (mergers and acquisitions, securities regulation, corporate governance) and removing task language, the domain-only cosine similarity rises above the 0.70 target for the specialist profile."
+  },
+  {
+    "domain": "Frontend web development",
+    "job_id": "job_frontend_alignment_v3",
+    "profile_id": "user_frontend_sme",
+    "before_similarity": 0.61,
+    "after_similarity": 0.75,
+    "notes": "Enumerating canonical subareas such as HTML, CSS, JavaScript, DOM rendering, accessibility compliance, and responsive design produces a strong specialist match while keeping the task capsule focused on UI annotation workflows."
+  }
+]

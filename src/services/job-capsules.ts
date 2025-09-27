@@ -6,7 +6,7 @@ import { CapsulePair, NormalizedJobPosting, UpsertJobRequest } from '../utils/ty
 import { createTextResponse } from './openai-responses';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
-  'You produce two concise, high-precision capsules for vector search from a job posting.\nCapsules must be grammatical sentences only (no bullet lists, no angle brackets, no telegraph style).\nUse only facts present in the job text. Do not invent tools, tasks, or domains.\nBe PII-safe: do not include company names or personal names.\nReturn strictly valid JSON; no commentary or extra text outside the JSON.';
+  'You produce two concise, high-precision capsules for vector search from a job posting.\nCapsules must be grammatical sentences only (no bullet lists, no angle brackets, no telegraph style).\nUse facts from the job text; do not invent named employers or tools not mentioned.\nPII-safe: no company names or personal names. Return strictly valid JSON; no extra commentary.';
 
 const CAPSULE_TEMPERATURE = 0.2;
 // Allow additional room for the model to satisfy the strict
@@ -18,24 +18,8 @@ const CAPSULE_MAX_OUTPUT_TOKENS = 1600;
 const KEYWORD_MIN_COUNT = 10;
 
 const DOMAIN_DISALLOWED_TOKENS = [
-  'text',
-  'dataset',
-  'file',
-  'files',
-  'software',
-  'labeling',
-  'annotation',
-  'evaluation',
-  'rating',
-  'prompt',
-  'response',
-  'sft',
-  'rlhf',
-  'dpo',
-  'qa',
-  'healthcare',
-  'medical content',
   'posted',
+  'posting',
   'seeking',
   'candidate',
   'candidates',
@@ -43,16 +27,47 @@ const DOMAIN_DISALLOWED_TOKENS = [
   'applicants',
   'availability',
   'schedule',
+  'time requirement',
   'hours',
   'budget',
   'rate',
   'pay',
   'countries',
-  'english level',
+  'language level',
   'labels per file',
   'total labels',
   'number of labelers',
   'opportunity',
+  'audience',
+  'accuracy',
+  'clarity',
+  'empathy',
+  'content',
+  'information',
+  'dataset',
+  'datasets',
+  'file',
+  'files',
+  'platform',
+  'platforms',
+  'tool',
+  'tools',
+  'software',
+  'labeling',
+  'annotation',
+  'evaluate',
+  'evaluation',
+  'evaluations',
+  'rating',
+  'ratings',
+  'prompt',
+  'prompts',
+  'response',
+  'responses',
+  'sft',
+  'rlhf',
+  'dpo',
+  'qa',
 ];
 
 const TASK_DISALLOWED_TOKENS = [
@@ -60,26 +75,22 @@ const TASK_DISALLOWED_TOKENS = [
   'dataset',
   'files',
   'labels',
-  'label',
   'labeling software',
   'software',
   'posted',
   'seeking',
   'candidate',
   'candidates',
-  'applicant',
-  'applicants',
   'availability',
   'schedule',
   'budget',
   'rate',
   'pay',
   'countries',
-  'english level',
+  'language level',
   'labels per file',
   'total labels',
   'number of labelers',
-  'company names',
 ];
 
 const DOMAIN_DISALLOWED_SET = new Set(DOMAIN_DISALLOWED_TOKENS.map((token) => token.toLowerCase()));
@@ -158,46 +169,33 @@ const JOB_CAPSULE_USER_MESSAGE = `Return JSON with this exact shape:
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<1-2 sentences, 60-110 words, subject-matter ONLY>",
-    "keywords": ["<10-16 distinct domain nouns>"]
+    "text": "<1–2 sentences, 60–110 words, subject-matter ONLY>",
+    "keywords": ["<10–16 distinct domain nouns>"]
   },
   "task_capsule": {
-    "text": "<1 paragraph, 90-140 words, AI/LLM data work ONLY>",
-    "keywords": ["<10-16 distinct task/tool/label/modality/workflow nouns>"]
+    "text": "<1 paragraph, 90–140 words, AI/LLM data work ONLY>",
+    "keywords": ["<10–16 distinct task/tool/label/modality/workflow nouns>"]
   }
 }
 
-GLOBAL RULES
-- Use ONLY facts in JOB_TEXT. Do NOT invent.
-- Sentences only. No lists, no angle brackets, no headings, no telegraph notes.
-- Avoid logistics/marketing/HR content: do not include "posted", "seeking", "candidates", "opportunity", "availability", "schedule", "time requirement", "hours", "countries", "English level", "budget", "rate", "pay", "labels per file", "total labels", "number of labelers". Do not include company names.
-- Avoid generic soft/meta words: "accuracy", "clarity", "empathy", "audience", "resource", "reliability", "accessibility", unless part of a named standard.
-- Keywords must be distinct noun(-phrase) tokens that already appear verbatim in BOTH the capsule text and JOB_TEXT. Lowercase keywords unless standard acronyms (e.g., "OB-GYN", "MD", "SFT", "RLHF"). No numbers, no duplicates, no verbs in keywords.
+RULES — DOMAIN (subject-matter ONLY)
+- Include ONLY subject-matter nouns actually present or canonically implied by the named domain: specialties, subdisciplines, procedures, instruments, standards/frameworks, credentials/licenses (MD, PE, CPA), formal training (residency/fellowship/board), typical settings (clinic, courtroom, plant, field, repo).
+- Canonical subareas rule: If the job names a broad domain (e.g., “civil engineering”, “frontend web”, “corporate law”, “accounting”, “data science”), you MAY include well-known subareas and routine procedures commonly and directly subsumed by that domain (e.g., structural analysis, geotechnical design; HTML/CSS/JavaScript/DOM; mergers & acquisitions; financial modeling; supervised learning). Do NOT include niche subtopics that are not standard for the named domain. Limit canonical additions to 5–10 high-signal nouns.
+- EXCLUDE: any AI/LLM/data-work terms (annotation, labeling, NER, OCR, bbox, polygon, transcription, prompt, response, SFT, RLHF, DPO, QA), logistics/HR (posted, seeking, candidates, availability, schedule, countries, language level, budget, rate, pay, labels per file, total labels, number of labelers), generic meta (“accuracy”, “clarity”, “empathy”, “audience”, “content”, “information”, “dataset”, “files”), and company names.
+- Form: 1–2 sentences, 60–110 words. Prefer concrete nouns over adjectives.
+- Keywords: 10–16 distinct domain tokens taken from this domain text. No logistics, no task words, no duplicates.
 
-DOMAIN CAPSULE (subject-matter ONLY)
-- Purpose: encode the job's hard subject-matter requirements so specialists cluster together.
-- Include ONLY subject-matter nouns actually in JOB_TEXT: specialties, subdisciplines, procedures, instruments, imaging modalities, credentials/licenses (MD, board-certified), formal training (residency/fellowship), standards/frameworks, domain-specific data types.
-- EXCLUDE: any AI/LLM annotation/training/evaluation terms (annotation, labeling, label, NER, OCR, bbox, polygon, transcription, prompt, response, SFT, RLHF, DPO, "Label Studio", "CVAT"), generic/logistics tokens (text, dataset, files, software), marketing/HR content, soft/meta words. Do not include "healthcare" or "medical content" unless those exact broad domains are the true requirement. For clinical roles, prefer the precise specialty nouns (e.g., "obstetrics and gynecology / OB-GYN", "maternal-fetal medicine", "obstetric ultrasound", "gynecologic surgery").
-- Form: 1-2 sentences, 60-110 words.
-- Keywords: 10-16 distinct domain tokens from the capsule sentences and JOB_TEXT (e.g., "obstetrics and gynecology", "OB-GYN", "maternal-fetal medicine", "prenatal care", "labor and delivery", "gynecologic surgery", "obstetric ultrasound", "MD", "residency", "women's health"). No logistics or task tokens in domain keywords.
-
-TASK CAPSULE (AI/LLM data work ONLY)
-- Purpose: encode the job's labeling/training/evaluation work so skills matchers retrieve the right people.
-- Include ONLY AI/LLM data work explicitly present in JOB_TEXT: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), tools/platforms (only if named), workflows (SFT, RLHF, DPO), rubric/QA/consistency checks, prompt/response writing, benchmark or evaluation dataset creation.
-- Keep domain nouns minimal and only when directly tied to a task (e.g., "medical content evaluation", "code annotation"). Do not re-list domain specialties here.
-- EXCLUDE: logistics/HR/marketing/pay/schedule/country/language level, file counts, "labels per file", company names. Do not rely on generic tokens like "text", "dataset", "files", "labels" as keywords; if needed, prefer a precise noun like "text modality".
-- Form: a single paragraph, 90-140 words. Do not repeat the same token more than once unless it is a standard acronym (e.g., SFT).
-- Keywords: 10-16 distinct task/tool/label/modality/workflow tokens from the paragraph and JOB_TEXT (e.g., "evaluation", "rating", "rubric", "prompt writing", "response writing", "supervised fine-tuning", "SFT", "text modality", "annotation QA", "consistency review"). No logistics words.
-
-IF NO AI/LLM TASK EVIDENCE
-- If JOB_TEXT contains no explicit AI/LLM labeling/training/evaluation details, set:
-  task_capsule.text = "No AI/LLM data-labeling, model training, or evaluation requirements are stated in this job."
-  task_capsule.keywords = ["none"]
+RULES — TASK (AI/LLM data work ONLY)
+- Include ONLY AI/LLM data work explicitly present: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), tools/platforms (name only if in job text), workflows (SFT, RLHF, DPO), rubric/QA/consistency checks, prompt/response writing, benchmark/eval dataset creation.
+- Keep domain nouns minimal and only when directly tied to a task (e.g., “code annotation”, “legal document classification”, “medical content evaluation”). Do not restate the domain list here.
+- EXCLUDE: logistics/HR/marketing/pay/schedule/country/language-level, file counts, “labels per file”, company names. Avoid generic filler tokens like “text/dataset/files/labels” in keywords; prefer precise “text modality” if needed.
+- Form: one paragraph, 90–140 words. Do not repeat the same token more than once unless it is a standard acronym (e.g., SFT, RLHF).
+- Keywords: 10–16 distinct task/tool/label/modality/workflow tokens from this paragraph. No logistics, no duplicates.
 
 OUTPUT CONSTRAINTS
-- Return strictly valid JSON matching the schema above (UTF-8, no trailing commas).
+- Return strictly valid JSON (UTF-8, no trailing commas), exactly matching the schema above.
 - Do not include any extra fields.
-- Ensure every keyword appears verbatim in both the capsule text and JOB_TEXT (except "none" case).
+- Ensure every keyword appears verbatim in the corresponding capsule text. (For DOMAIN keywords, they do not need to appear in JOB_TEXT if they are canonical subareas of the named domain.)
 
 JOB_TITLE: {{JOB_TITLE}}
 JOB_TEXT:
@@ -506,6 +504,8 @@ async function callJobCapsuleModel(userPrompt: string): Promise<string> {
       model: capsuleModel,
       temperature: CAPSULE_TEMPERATURE,
       maxOutputTokens: CAPSULE_MAX_OUTPUT_TOKENS,
+      frequencyPenalty: 0.6,
+      presencePenalty: 0,
       messages: [
         { role: 'system', content: JOB_CAPSULE_SYSTEM_MESSAGE },
         { role: 'user', content: userPrompt },
