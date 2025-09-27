@@ -75,7 +75,7 @@ describe('capsule prompt', () => {
     const prompt = buildCapsulePrompt(profile, evidence);
 
     expect(prompt).toContain('GLOBAL RULES');
-    expect(prompt).toContain('Profile Domain Capsule (strictly subject-matter; 40-120 words)');
+    expect(prompt).toContain('Profile Domain Capsule (subject-matter ONLY; 90-140 words)');
     expect(prompt).toContain('Profile Task Capsule (AI/LLM data work ONLY; evidence-only; 0 or 120-200 words)');
     expect(prompt).toContain("EVIDENCE (use ONLY these for the Task Capsule when non-empty; if empty, use the fixed line above):");
     expect(prompt).toContain('prompt writing');

@@ -29,6 +29,8 @@ describe('createTextResponse parameter handling', () => {
       ],
       temperature: 0.2,
       maxOutputTokens: 512,
+      frequencyPenalty: 0.6,
+      presencePenalty: 0,
     });
 
     expect(result).toBe('hello world');
@@ -36,6 +38,8 @@ describe('createTextResponse parameter handling', () => {
     const payload = mockCreate.mock.calls[0][0];
     expect(payload.temperature).toBe(0.2);
     expect(payload.max_output_tokens).toBe(512);
+    expect(payload.frequency_penalty).toBe(0.6);
+    expect(payload.presence_penalty).toBe(0);
   });
 
   it('omits tuning parameters for constrained reasoning-style models', async () => {
@@ -51,11 +55,15 @@ describe('createTextResponse parameter handling', () => {
       ],
       temperature: 0.7,
       maxOutputTokens: 2048,
+      frequencyPenalty: 0.6,
+      presencePenalty: -0.5,
     });
 
     expect(mockCreate).toHaveBeenCalledTimes(1);
     const payload = mockCreate.mock.calls[0][0];
     expect(payload.temperature).toBeUndefined();
     expect(payload.max_output_tokens).toBeUndefined();
+    expect(payload.frequency_penalty).toBeUndefined();
+    expect(payload.presence_penalty).toBeUndefined();
   });
 });

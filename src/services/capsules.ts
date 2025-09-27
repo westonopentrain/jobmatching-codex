@@ -62,12 +62,13 @@ GLOBAL RULES
 - PII: Do NOT include names; use "the candidate."
 - Keep prose minimal and noun-dense. Avoid role narratives, responsibilities, methods, dates, employers, or soft skills.
 
-1) Profile Domain Capsule (strictly subject-matter; 40-120 words)
-   - Include ONLY domain/subject-matter nouns present in SOURCE (or standard synonyms of exact SOURCE terms).
-   - Examples of acceptable content: languages (including dialects), scientific fields, engineering disciplines, programming languages/frameworks, finance/legal domains, industry verticals, certifications/credentials, specialized procedures, standards, data types.
-   - EXCLUDE: roles/titles (e.g., instructor, manager, writer), verbs (taught, organized, led), responsibilities, pedagogy, employment history, years, company names, soft skills, tooling, AI/LLM terms.
-   - Style: compressed, telegraphic; one or two concise sentences or a single condensed line of noun phrases.
-   - End with: Keywords: <10-20 tokens that appear in this capsule AND in SOURCE>
+1) Profile Domain Capsule (subject-matter ONLY; 90-140 words)
+   - Include ONLY subject-matter nouns from SOURCE: specialties, subdisciplines, procedures, instruments, standards/frameworks, credentials/licenses, formal training, languages/dialects, typical settings.
+   - Canonical subareas rule: When SOURCE names a broad domain (e.g., civil engineering, frontend web, corporate law, accounting, data science), you MAY list well-known subareas and routine procedures directly subsumed by that domain. Limit these canonical additions to 5-10 high-signal nouns and keep them aligned with SOURCE terminology.
+   - Allow standard synonyms or acronyms for SOURCE domain terms when they represent the same concept.
+   - EXCLUDE: AI/LLM/data-work terms (annotation, labeling, evaluation, QA, prompt writing, SFT/RLHF/DPO, tooling), logistics, roles/titles, verbs, employers, years, soft skills.
+   - Style: compact sentences only (no bullets). Keep focus on domain nouns; do not narrate responsibilities.
+   - End with: Keywords: <10-16 distinct domain nouns from this capsule text (no logistics, no task words)>
 
 2) Profile Task Capsule (AI/LLM data work ONLY; evidence-only; 0 or 120-200 words)
    - If EVIDENCE is NON-EMPTY:
@@ -161,6 +162,8 @@ export async function generateCapsules(profile: NormalizedUserProfile): Promise<
         { role: 'user', content: prompt },
       ],
       temperature: CAPSULE_TEMPERATURE,
+      frequencyPenalty: 0.6,
+      presencePenalty: 0,
     })
   ).catch((error) => {
     if (error instanceof AppError) {

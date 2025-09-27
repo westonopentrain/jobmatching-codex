@@ -2,6 +2,13 @@
 
 This Fastify service receives Bubble user profile data, generates domain and task capsules with OpenAI, embeds each capsule with `text-embedding-3-large`, and upserts both vectors into Pinecone. It also supports manual Job capsule generation and a lightweight job → candidate scoring endpoint so operators can test roles such as OB-GYN labeling immediately. Bubble receives only the capsule texts, vector identifiers, and metadata required to display and audit updates.
 
+## Capsule Alignment v3 — canonical subareas & domain purity
+
+- Job upsert prompts now demand domain capsules that enumerate only subject-matter nouns, allow 5–10 canonical subareas for broad domains, and keep task/meta language entirely out of the domain channel. Task capsules stay dedicated to AI/LLM data work.
+- Profile domain prompts mirror the same subject-only discipline (90–140 words, 10–16 keywords) while the task capsule remains governed by evidence tokens.
+- Both jobs and profiles use a light post-filter that strips disallowed logistics/meta tokens from capsule text and keywords, and the OpenAI calls now apply a frequency penalty of `0.6` to discourage repetition.
+- See [`docs/capsule-alignment-v3/fixtures.json`](docs/capsule-alignment-v3/fixtures.json) for before/after similarity samples that clear the ≥0.70 SME target in corporate law and frontend web domains.
+
 ---
 
 

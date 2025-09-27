@@ -52,6 +52,8 @@ export interface CreateTextResponseOptions {
   messages: ResponseMessage[];
   temperature?: number;
   maxOutputTokens?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
 }
 
 export async function createTextResponse({
@@ -59,6 +61,8 @@ export async function createTextResponse({
   messages,
   temperature,
   maxOutputTokens,
+  frequencyPenalty,
+  presencePenalty,
 }: CreateTextResponseOptions): Promise<string> {
   const client = getOpenAIClient();
   const params: ResponseCreateParamsNonStreaming = {
@@ -70,8 +74,23 @@ export async function createTextResponse({
     params.max_output_tokens = maxOutputTokens;
   }
 
-  if (typeof temperature === 'number' && supportsCustomTemperature(model)) {
-    params.temperature = temperature;
+  if (supportsCustomTemperature(model)) {
+    if (typeof temperature === 'number') {
+      params.temperature = temperature;
+    }
+
+    const tunable = params as ResponseCreateParamsNonStreaming & {
+      frequency_penalty?: number;
+      presence_penalty?: number;
+    };
+
+    if (typeof frequencyPenalty === 'number') {
+      tunable.frequency_penalty = frequencyPenalty;
+    }
+
+    if (typeof presencePenalty === 'number') {
+      tunable.presence_penalty = presencePenalty;
+    }
   }
 
   const response = await client.responses.create(params);
