@@ -1,23 +1,90 @@
 import { resolveCapsuleModel } from './openai-model';
-import { extractCapsuleTexts } from './capsules';
 import { withRetry } from '../utils/retry';
 import { AppError } from '../utils/errors';
-import { logger } from '../utils/logger';
 import { sanitizeJobField, sanitizeJobStringArray } from '../utils/sanitize';
 import { CapsulePair, NormalizedJobPosting, UpsertJobRequest } from '../utils/types';
-import { extractLabelingEvidence, LabelingEvidenceResult } from '../utils/evidence';
-import { extractDomainEvidence, DomainEvidence } from '../utils/evidence_domain';
-import {
-  validateDomainCapsuleText,
-  validateTaskCapsuleText,
-} from './validate_job_capsules';
 import { createTextResponse } from './openai-responses';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
-  'You generate Job Domain and Task capsules for vector search across ANY domain. Be PII-safe. Do not include names. Output sentences only (no angle brackets, no bullets).';
+  'You produce two concise, high-precision capsules for vector search from a job posting. \nCapsules must be grammatical sentences (no bullet lists, no angle brackets, no telegraph style).\nYou must output only valid JSON following the given schema; do not include commentary or explanation. \nUse only facts present in the job text. Do not invent.\nBe PII-safe: do not include company names or personal names.';
 
 const CAPSULE_TEMPERATURE = 0.2;
-const MAX_GENERATION_ATTEMPTS = 3;
+
+const JOB_CAPSULE_USER_MESSAGE = `You must return JSON with this exact schema:
+
+{
+  "job_id": "<string>",
+  "domain_capsule": {
+    "text": "<1–2 sentences, 60–120 words, subject-matter ONLY>",
+    "keywords": ["<10–16 distinct domain nouns>"]
+  },
+  "task_capsule": {
+    "text": "<1 paragraph, 80–140 words, AI/LLM data work ONLY>",
+    "keywords": ["<10–16 distinct task/tool/label/modality/workflow nouns>"]
+  }
+}
+
+DEFINITIONS & RULES
+
+GENERAL
+- Use ONLY facts in JOB_TEXT. Do not invent tools, tasks, or domains.
+- Sentences only (no lists, no angle brackets, no headings).
+- Avoid generic filler: do not include “posted”, “seeking”, “candidates”, “opportunity”, “flexible schedule”, “availability”, “budget”, “rate”, “pay”, “hours”, “countries”, “English level”, “labels per file”, “total labels”, “number of labelers”, or company names (e.g., remove “OpenTrain”).
+- Keywords must be distinct noun or noun-phrase tokens that appear verbatim in BOTH (a) the capsule text and (b) JOB_TEXT. 
+- Do not include numbers, months, or vague meta words in keywords (e.g., avoid “five”, “minimum”, “accuracy”, “clarity”, “audience”, “resource”, “reliability”, “accessibility”).
+- Lowercase keywords unless they are standard acronyms or proper domain abbreviations (e.g., “OB‑GYN”, “MD”, “SFT”, “RLHF”).
+
+DOMAIN CAPSULE (subject-matter ONLY)
+- Purpose: encode the job’s hard subject-matter requirements so specialists cluster together.
+- Include ONLY subject-matter nouns actually present in JOB_TEXT: specialties, subdisciplines, procedures, instruments, imaging modalities, credentials/licenses (e.g., MD, board-certified), formal training (residency/fellowship), standards/frameworks, domain-specific data types.
+- EXCLUDE: AI/LLM annotation terms (annotation, labeling, NER, OCR, bbox, polygon, transcription, prompt, SFT, RLHF, DPO, “Label Studio”, “CVAT”), hiring/marketing/logistics/pay/schedule/country/language level, soft-skill meta (accuracy, clarity, empathy).
+- Form: 1–2 sentences, 60–120 words. 
+- Keywords: 10–16 distinct domain tokens drawn from the domain sentences (e.g., “obstetrics and gynecology”, “maternal‑fetal medicine”, “obstetric ultrasound”, “gynecologic surgery”, “labor and delivery”, “MD”, “residency”, “women’s health”). No duplicates; no junk.
+
+TASK CAPSULE (AI/LLM data work ONLY)
+- Purpose: encode the job’s labeling/training/evaluation work so skills matchers retrieve the right people.
+- Include ONLY AI/LLM data work explicitly present in JOB_TEXT: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), tools/platforms (name only if present), workflows (SFT, RLHF, DPO), rubric/QA/consistency checks, prompt/response writing, benchmark/eval dataset creation.
+- Keep domain nouns minimal and only when directly tied to a task (e.g., “medical content evaluation”). 
+- EXCLUDE: hiring/marketing/logistics/pay/schedule/country/language level, headcount, file counts, “labels per file”, company names.
+- Form: 1 paragraph, 80–140 words. Do not repeat the same token more than once unless it is part of a standard acronym or necessary noun phrase.
+- Keywords: 10–16 distinct task/tool/label/modality/workflow tokens drawn from the task paragraph (e.g., “evaluation”, “rating”, “rubric”, “prompt writing”, “response writing”, “supervised fine‑tuning”, “SFT”, “text modality”, “annotation QA”). No duplicates; no junk.
+
+IF NO TASK EVIDENCE
+- If JOB_TEXT contains no explicit AI/LLM labeling/training/evaluation details, set:
+  task_capsule.text = "No AI/LLM data-labeling, model training, or evaluation requirements are stated in this job."
+  task_capsule.keywords = ["none"]
+
+OUTPUT CONSTRAINTS
+- Output strictly valid JSON (UTF-8, no trailing commas).
+- Do not include any fields other than the schema above.
+- Ensure every keyword appears verbatim in both the capsule text and JOB_TEXT (except “none” case).
+
+JOB_TITLE: {{JOB_TITLE}}
+JOB_TEXT:
+{{JOB_TEXT}}
+
+job_id for output: {{JOB_ID}}`;
+
+interface CapsuleSection {
+  text: string;
+  keywords: string[];
+}
+
+interface JobCapsuleModelResponse {
+  job_id: string;
+  domain_capsule: CapsuleSection;
+  task_capsule: CapsuleSection;
+}
+
+class CapsuleResponseError extends Error {
+  public readonly retryable: boolean;
+
+  constructor(message: string, retryable = true) {
+    super(message);
+    this.name = 'CapsuleResponseError';
+    this.retryable = retryable;
+  }
+}
 
 function assertHasFields(pairs: Array<[string, string]>): void {
   if (pairs.length === 0) {
@@ -33,91 +100,24 @@ function formatPairsForPrompt(pairs: Array<[string, string]>): string {
   return pairs.map(([label, value]) => `${label}: ${value}`).join('\n');
 }
 
-function combineEvidenceTerms(evidence: DomainEvidence | LabelingEvidenceResult): string[] {
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-
-  for (const list of [evidence.phrases, evidence.tokens]) {
-    for (const term of list) {
-      const trimmed = term.trim();
-      if (!trimmed) {
-        continue;
-      }
-      const key = trimmed.toLowerCase();
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      ordered.push(trimmed);
-    }
+function fillTemplate(template: string, replacements: Record<string, string>): string {
+  let output = template;
+  for (const [key, value] of Object.entries(replacements)) {
+    const token = `{{${key}}}`;
+    output = output.split(token).join(value);
   }
-
-  return ordered;
+  return output;
 }
 
-function formatEvidenceBlock(terms: string[]): string {
-  if (terms.length === 0) {
-    return '(none)';
-  }
-  return terms.join(', ');
-}
+function buildUserPrompt(job: NormalizedJobPosting): string {
+  const jobTitle = job.title ?? '';
+  const replacements = {
+    JOB_TITLE: jobTitle,
+    JOB_TEXT: job.sourceText,
+    JOB_ID: job.jobId,
+  };
 
-function buildDomainEvidenceSource(job: NormalizedJobPosting): string {
-  const segments: string[] = [];
-  if (job.title) segments.push(job.title);
-  if (job.instructions) segments.push(job.instructions);
-  if (job.datasetDescription) segments.push(job.datasetDescription);
-  if (job.dataSubjectMatter) segments.push(job.dataSubjectMatter);
-  if (job.dataType) segments.push(job.dataType);
-  if (job.requirementsAdditional) segments.push(job.requirementsAdditional);
-  if (job.additionalSkills.length > 0) segments.push(job.additionalSkills.join('\n'));
-  return segments
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0)
-    .join('\n');
-}
-
-function buildPrompt(
-  job: NormalizedJobPosting,
-  domainEvidence: DomainEvidence,
-  taskEvidence: LabelingEvidenceResult
-): string {
-  const domainTerms = combineEvidenceTerms(domainEvidence);
-  const taskTerms = combineEvidenceTerms(taskEvidence);
-
-  return `You must produce EXACTLY two blocks in this order.
-
-Block 1 — Job Domain Capsule (subject-matter only)
-- Use ONLY tokens from DOMAIN_EVIDENCE (or obvious standard synonyms of those exact tokens).
-- Compose 1–2 complete sentences (45–100 words) packed with specialty nouns, procedures, and credential phrases.
-- Exclude hiring, logistics, marketing, availability, compensation, soft skills, tooling, or AI/LLM terminology.
-- Do not repeat the same token more than once unless it names a distinct sub-specialty.
-- End with: Keywords: <10–20 tokens chosen ONLY from DOMAIN_EVIDENCE and present in this paragraph>.
-
-Block 2 — Job Task Capsule (AI/LLM work only)
-- Use ONLY tokens from TASK_EVIDENCE (or obvious standard synonyms of those exact tokens).
-- Summarize the labeling/training/evaluation workflow in 2–3 crisp sentences (70–140 words) covering label types, modalities, rubrics, and tools explicitly in the job text.
-- Exclude hiring/logistics/budget/country/language requirements unless they are intrinsic to the data work itself.
-- Avoid chant-like repetition—each noun or task should appear once.
-- End with: Keywords: <10–20 tokens chosen ONLY from TASK_EVIDENCE and present in this paragraph>.
-
-Do not use angle brackets < >. Do not output bullet lists. Keep both paragraphs purely text with standard punctuation.
-
-JOB (verbatim):
-${job.promptText}
-
-DOMAIN_EVIDENCE (allowed tokens/phrases for Block 1 only):
-${formatEvidenceBlock(domainTerms)}
-
-TASK_EVIDENCE (allowed tokens/phrases for Block 2 only):
-${formatEvidenceBlock(taskTerms)}
-
-FORMAT:
-<Job Domain Capsule paragraph>
-Keywords: ...
-
-<Job Task Capsule paragraph>
-Keywords: ...`;
+  return fillTemplate(JOB_CAPSULE_USER_MESSAGE, replacements);
 }
 
 export function normalizeJobRequest(request: UpsertJobRequest): NormalizedJobPosting {
@@ -184,7 +184,68 @@ export function normalizeJobRequest(request: UpsertJobRequest): NormalizedJobPos
   return normalized;
 }
 
-async function requestCapsules(job: NormalizedJobPosting, prompt: string): Promise<{ domain: string; task: string }> {
+function ensureSection(section: unknown, field: 'domain_capsule' | 'task_capsule'): CapsuleSection {
+  if (!section || typeof section !== 'object') {
+    throw new CapsuleResponseError(`${field} field is missing or invalid`);
+  }
+
+  const maybeSection = section as Partial<CapsuleSection>;
+  if (typeof maybeSection.text !== 'string') {
+    throw new CapsuleResponseError(`${field} text is missing or invalid`);
+  }
+
+  const text = maybeSection.text.trim();
+  if (!text) {
+    throw new CapsuleResponseError(`${field} text is empty`);
+  }
+
+  if (!Array.isArray(maybeSection.keywords) || maybeSection.keywords.length === 0) {
+    throw new CapsuleResponseError(`${field} keywords are missing`);
+  }
+
+  const keywords: string[] = [];
+  for (const keyword of maybeSection.keywords) {
+    if (typeof keyword !== 'string') {
+      throw new CapsuleResponseError(`${field} keywords must be strings`);
+    }
+    const trimmed = keyword.trim();
+    if (!trimmed) {
+      throw new CapsuleResponseError(`${field} keywords must be non-empty strings`);
+    }
+    keywords.push(trimmed);
+  }
+
+  return { text, keywords };
+}
+
+function parseJobCapsuleResponse(raw: string): JobCapsuleModelResponse {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new CapsuleResponseError(`Unable to parse JSON response: ${(error as Error).message}`);
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new CapsuleResponseError('Capsule response is not an object');
+  }
+
+  const jobResponse = parsed as Partial<JobCapsuleModelResponse>;
+  if (!jobResponse.job_id || typeof jobResponse.job_id !== 'string') {
+    throw new CapsuleResponseError('job_id field is missing or invalid');
+  }
+
+  const domain_capsule = ensureSection(jobResponse.domain_capsule, 'domain_capsule');
+  const task_capsule = ensureSection(jobResponse.task_capsule, 'task_capsule');
+
+  return {
+    job_id: jobResponse.job_id,
+    domain_capsule,
+    task_capsule,
+  };
+}
+
+async function callJobCapsuleModel(userPrompt: string): Promise<string> {
   const capsuleModel = resolveCapsuleModel();
 
   const responseText = await withRetry(() =>
@@ -193,7 +254,7 @@ async function requestCapsules(job: NormalizedJobPosting, prompt: string): Promi
       temperature: CAPSULE_TEMPERATURE,
       messages: [
         { role: 'system', content: JOB_CAPSULE_SYSTEM_MESSAGE },
-        { role: 'user', content: prompt },
+        { role: 'user', content: userPrompt },
       ],
     })
   ).catch((error) => {
@@ -216,50 +277,55 @@ async function requestCapsules(job: NormalizedJobPosting, prompt: string): Promi
     });
   }
 
-  const capsules = extractCapsuleTexts(responseText);
-  return { domain: capsules.domain.text, task: capsules.task.text };
+  return responseText;
 }
 
-export async function generateJobCapsules(job: NormalizedJobPosting): Promise<CapsulePair> {
-  const domainEvidenceSource = buildDomainEvidenceSource(job);
-  const domainEvidence = extractDomainEvidence(domainEvidenceSource);
-  const taskEvidence = extractLabelingEvidence(job.sourceText);
-  const prompt = buildPrompt(job, domainEvidence, taskEvidence);
+async function requestCapsules(job: NormalizedJobPosting): Promise<JobCapsuleModelResponse> {
+  const userPrompt = buildUserPrompt(job);
+  let lastError: Error | null = null;
+  let lastResponse: string | null = null;
 
-  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt += 1) {
-    const capsuleTexts = await requestCapsules(job, prompt);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const responseText = await callJobCapsuleModel(userPrompt);
+    lastResponse = responseText;
 
     try {
-      const domainText = await validateDomainCapsuleText(capsuleTexts.domain, {
-        evidence: domainEvidence,
-      });
-      const taskText = await validateTaskCapsuleText(capsuleTexts.task, {
-        evidence: taskEvidence,
-      });
-
-      return {
-        domain: { text: domainText },
-        task: { text: taskText },
-      };
-    } catch (error) {
-      if (attempt === MAX_GENERATION_ATTEMPTS - 1) {
-        throw error;
+      const parsed = parseJobCapsuleResponse(responseText);
+      if (parsed.job_id !== job.jobId) {
+        throw new CapsuleResponseError('Returned job_id does not match request job_id');
       }
-      logger.warn(
-        {
-          event: 'job_capsule.validation_retry',
-          jobId: job.jobId,
-          attempt: attempt + 1,
-          message: (error as Error).message,
-        },
-        'Retrying job capsule generation due to validation failure'
-      );
+      return parsed;
+    } catch (error) {
+      lastError = error as Error;
+      if (error instanceof CapsuleResponseError && error.retryable && attempt === 0) {
+        continue;
+      }
+      break;
     }
   }
 
   throw new AppError({
     code: 'LLM_FAILURE',
     statusCode: 502,
-    message: 'Exceeded maximum attempts when generating job capsules',
+    message: 'Failed to parse job capsule response from language model',
+    details: {
+      error: lastError ? lastError.message : 'unknown error',
+      snippet: lastResponse ? lastResponse.slice(0, 200) : undefined,
+    },
   });
+}
+
+export async function generateJobCapsules(job: NormalizedJobPosting): Promise<CapsulePair> {
+  const response = await requestCapsules(job);
+
+  return {
+    domain: {
+      text: response.domain_capsule.text,
+      keywords: response.domain_capsule.keywords,
+    },
+    task: {
+      text: response.task_capsule.text,
+      keywords: response.task_capsule.keywords,
+    },
+  };
 }

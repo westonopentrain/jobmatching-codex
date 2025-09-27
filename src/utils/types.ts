@@ -22,6 +22,7 @@ export interface NormalizedUserProfile {
 
 export interface Capsule {
   text: string;
+  keywords?: string[];
 }
 
 export interface CapsulePair {
