@@ -13,6 +13,7 @@ This Fastify service receives Bubble user profile data, generates domain and tas
 - When no qualifying evidence is present, the Task Capsule is automatically replaced with the fixed sentence `No AI/LLM data-labeling, model training, or evaluation experience was provided in the source.` followed by `Keywords: none`.
 - To surface valid Task Capsule content, include concrete evidence in the payload (e.g., `"NER on clinical notes"`, `"Bounding boxes in Label Studio"`, `"Prompt writing for SFT"`, `"RLHF pairwise comparisons"`).
 - The `/v1/users/upsert` endpoint accepts aliases: `label_experience` is normalized to `labeling_experience`, and `language` (string) is normalized to the `languages` array.
+- Job capsules now derive DOMAIN_EVIDENCE and TASK_EVIDENCE directly from job fields, rewrite out soft/logistics language, enforce sentence-only paragraphs, and regenerate `Keywords:` using only evidence tokens.
 
 ---
 
