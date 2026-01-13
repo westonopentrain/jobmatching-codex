@@ -172,7 +172,7 @@ export async function classifyJob(job: NormalizedJobPosting): Promise<JobClassif
           temperature: CLASSIFICATION_TEMPERATURE,
           maxOutputTokens: CLASSIFICATION_MAX_TOKENS,
         }),
-      { maxAttempts: 2, baseDelayMs: 1000 }
+      { retries: 2, delaysMs: [1000, 2000] }
     );
 
     const result = parseClassificationResponse(responseText);
@@ -220,6 +220,7 @@ function fallbackClassification(job: NormalizedJobPosting): JobClassificationRes
     .toLowerCase();
 
   // Check for obvious specialized signals
+  // Credential requirements are HARD signals - always specialized
   const hasCredentials = /\b(md|phd|jd|pe|cpa|rn|np)\b/i.test(text);
   const hasMedical = /\b(medical|doctor|physician|clinical|healthcare)\b/i.test(text);
   const hasLegal = /\b(legal|attorney|lawyer|law)\b/i.test(text);
@@ -229,11 +230,16 @@ function fallbackClassification(job: NormalizedJobPosting): JobClassificationRes
   const hasGenericLabels = /\b(bounding box|transcription|tagging|basic annotation)\b/i.test(text);
   const hasEntryLevel = /\b(entry|beginner|no experience|any level)\b/i.test(text);
 
+  // Credentials always override generic signals - if a job requires MD, it's specialized
+  // even if the task is "bounding box" (e.g., medical image annotation by doctors)
   const isSpecialized = hasCredentials || hasMedical || hasLegal || hasEngineering;
   const isGeneric = hasGenericLabels || hasEntryLevel;
 
+  // Credentials are hard requirements - override generic signals
+  const jobClass = hasCredentials ? 'specialized' : (isSpecialized && !isGeneric ? 'specialized' : 'generic');
+
   return {
-    jobClass: isSpecialized && !isGeneric ? 'specialized' : 'generic',
+    jobClass,
     confidence: 0.5,
     requirements: {
       credentials: [],

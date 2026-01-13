@@ -189,7 +189,7 @@ export async function classifyUser(profile: NormalizedUserProfile): Promise<User
           temperature: CLASSIFICATION_TEMPERATURE,
           maxOutputTokens: CLASSIFICATION_MAX_TOKENS,
         }),
-      { maxAttempts: 2, baseDelayMs: 1000 }
+      { retries: 2, delaysMs: [1000, 2000] }
     );
 
     const result = parseClassificationResponse(responseText);

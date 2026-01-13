@@ -8,6 +8,7 @@ import { EMBEDDING_DIMENSION, EMBEDDING_MODEL, embedText } from '../services/emb
 import { upsertVector } from '../services/pinecone';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
+import { classifyJobSync } from '../services/job-classifier';
 
 const fieldSchema = z.object({
   Instructions: z.string().optional(),
@@ -82,6 +83,20 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         'Job capsules generated successfully'
       );
 
+      // Classify job to determine specialized vs generic and extract requirements
+      const classification = classifyJobSync(normalized);
+      log.info(
+        {
+          event: 'job.classified',
+          jobId: normalized.jobId,
+          jobClass: classification.jobClass,
+          confidence: classification.confidence,
+          credentials: classification.requirements.credentials,
+          expertiseTier: classification.requirements.expertiseTier,
+        },
+        'Job classified for smart matching'
+      );
+
       const domainVectorId = `job_${normalized.jobId}::domain`;
       const taskVectorId = `job_${normalized.jobId}::task`;
 
@@ -90,16 +105,30 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         embedText(capsules.task.text),
       ]);
 
-      await upsertVector(domainVectorId, domainEmbedding, {
+      // Build enriched metadata for Pinecone filtering
+      // This enables smart matching: specialized jobs filter by credentials,
+      // generic jobs exclude overqualified domain experts
+      const jobMetadata = {
         job_id: normalized.jobId,
-        section: 'domain',
         model: EMBEDDING_MODEL,
+        type: 'job' as const,
+        job_class: classification.jobClass,
+        required_credentials: classification.requirements.credentials,
+        subject_matter_codes: classification.requirements.subjectMatterCodes,
+        required_experience_years: classification.requirements.minimumExperienceYears,
+        expertise_tier: classification.requirements.expertiseTier,
+        countries: classification.requirements.countries,
+        languages: classification.requirements.languages,
+      };
+
+      await upsertVector(domainVectorId, domainEmbedding, {
+        ...jobMetadata,
+        section: 'domain' as const,
       });
 
       await upsertVector(taskVectorId, taskEmbedding, {
-        job_id: normalized.jobId,
-        section: 'task',
-        model: EMBEDDING_MODEL,
+        ...jobMetadata,
+        section: 'task' as const,
       });
 
       log.info(
@@ -131,6 +160,15 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
           capsule_text: capsules.task.text,
           chars: capsules.task.text.length,
           keywords: capsules.task.keywords ?? [],
+        },
+        // Classification determines matching behavior:
+        // - specialized: filter candidates by credentials/domain, use domain-heavy weights
+        // - generic: exclude overqualified domain experts, use task-heavy weights
+        classification: {
+          job_class: classification.jobClass,
+          confidence: classification.confidence,
+          requirements: classification.requirements,
+          reasoning: classification.reasoning,
         },
         updated_at: now,
         elapsed_ms: Number(elapsedMs.toFixed(2)),
