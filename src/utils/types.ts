@@ -99,7 +99,6 @@ export interface CapsuleResponse {
 // Classification types for job matching
 
 export type JobClass = 'specialized' | 'generic';
-export type UserClass = 'domain_expert' | 'general_labeler' | 'mixed';
 export type ExpertiseTier = 'entry' | 'intermediate' | 'expert' | 'specialist';
 
 /**
@@ -134,20 +133,7 @@ export interface UserVectorMetadata {
   model: string;
   type: 'user';
 
-  // Classification
-  user_class: UserClass;
-
-  // Credentials and expertise
-  credentials: string[];
-  domain_codes: string[];
-  estimated_experience_years: number;
-  expertise_tier: ExpertiseTier;
-
   // Geographic/language
   country?: string;
   languages: string[];
-
-  // Labeling capability
-  has_labeling_experience: boolean;
-  task_capabilities: string[];
 }

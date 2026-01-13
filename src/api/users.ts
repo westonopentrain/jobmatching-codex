@@ -9,7 +9,6 @@ import { generateCapsules } from '../services/capsules';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
 import { upsertVector } from '../services/pinecone';
 import { requireEnv } from '../utils/env';
-import { classifyUserSync } from '../services/user-classifier';
 
 const requestSchema = z.object({
   user_id: z.string().min(1),
@@ -103,21 +102,6 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         'Capsules generated successfully'
       );
 
-      // Classify user to determine domain_expert vs general_labeler vs mixed
-      const classification = classifyUserSync(normalized);
-      log.info(
-        {
-          event: 'user.classified',
-          userId: normalized.userId,
-          userClass: classification.userClass,
-          confidence: classification.confidence,
-          credentials: classification.credentials,
-          expertiseTier: classification.expertiseTier,
-          hasLabelingExperience: classification.hasLabelingExperience,
-        },
-        'User classified for smart matching'
-      );
-
       const domainVectorId = `usr_${normalized.userId}::domain`;
       const taskVectorId = `usr_${normalized.userId}::task`;
 
@@ -135,21 +119,10 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         'Embeddings generated successfully'
       );
 
-      // Build enriched metadata for Pinecone filtering
-      // This enables smart matching:
-      // - Specialized jobs filter by credentials/domain codes
-      // - Generic jobs exclude pure domain experts (avoid spamming MDs with bounding box work)
       const userMetadata = {
         user_id: normalized.userId,
         model: EMBEDDING_MODEL,
         type: 'user' as const,
-        user_class: classification.userClass,
-        credentials: classification.credentials,
-        domain_codes: classification.domainCodes,
-        estimated_experience_years: classification.estimatedExperienceYears,
-        expertise_tier: classification.expertiseTier,
-        has_labeling_experience: classification.hasLabelingExperience,
-        task_capabilities: classification.taskCapabilities,
         languages: normalized.languages,
         ...(normalized.country ? { country: normalized.country } : {}),
       };
@@ -203,21 +176,6 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           vector_id: taskVectorId,
           capsule_text: capsules.task.text,
           chars: capsules.task.text.length,
-        },
-        // Classification determines matching eligibility:
-        // - domain_expert: eligible for specialized jobs, excluded from generic job spam
-        // - general_labeler: eligible for generic jobs, not for specialized unless has credentials
-        // - mixed: eligible for both specialized and generic jobs
-        classification: {
-          user_class: classification.userClass,
-          confidence: classification.confidence,
-          credentials: classification.credentials,
-          domain_codes: classification.domainCodes,
-          estimated_experience_years: classification.estimatedExperienceYears,
-          expertise_tier: classification.expertiseTier,
-          has_labeling_experience: classification.hasLabelingExperience,
-          task_capabilities: classification.taskCapabilities,
-          signals: classification.signals,
         },
         updated_at: now,
       });
