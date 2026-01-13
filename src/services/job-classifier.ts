@@ -221,22 +221,34 @@ function fallbackClassification(job: NormalizedJobPosting): JobClassificationRes
 
   // Check for obvious specialized signals
   // Credential requirements are HARD signals - always specialized
-  const hasCredentials = /\b(md|phd|jd|pe|cpa|rn|np)\b/i.test(text);
-  const hasMedical = /\b(medical|doctor|physician|clinical|healthcare)\b/i.test(text);
-  const hasLegal = /\b(legal|attorney|lawyer|law)\b/i.test(text);
-  const hasEngineering = /\b(engineer|engineering)\b/i.test(text) && /\b(civil|mechanical|electrical|structural)\b/i.test(text);
+  // These are professional credentials that require formal education/licensure
+  // Note: "DO" (Doctor of Osteopathic Medicine) removed as it matches common word "do"
+  const hasCredentials = /\b(md|phd|jd|pe|cpa|rn|np|msn|pharmd|dds|dmd|d\.o\.)\b/i.test(text);
+
+  // Professional titles that require licensure - HARD signals
+  // Only include titles that legally require professional certification
+  const hasProfessionalTitle = /\b(radiologist|cardiologist|surgeon|obgyn|oncologist|dermatologist|neurologist|psychiatrist|anesthesiologist|pathologist|dentist|pharmacist|nurse practitioner|physician assistant|attorney|paralegal)\b/i.test(text);
+
+  // Soft specialized signals - indicate domain expertise but may be generic labeling jobs
+  // These are only used if there are NO generic signals present
+  const hasMedicalContext = /\b(clinical|residency|board.?certified)\b/i.test(text);
+  const hasLegalContext = /\b(bar exam|licensed attorney|law degree)\b/i.test(text);
 
   // Check for obvious generic signals
-  const hasGenericLabels = /\b(bounding box|transcription|tagging|basic annotation)\b/i.test(text);
-  const hasEntryLevel = /\b(entry|beginner|no experience|any level)\b/i.test(text);
+  const hasGenericLabels = /\b(bounding box|transcription|tagging|basic annotation|audio recording)\b/i.test(text);
+  const hasEntryLevel = /\b(entry level|beginner|no experience|any level)\b/i.test(text);
+  const hasGenericTask = /\b(annotator|labeler|rater|evaluator|transcriber)\b/i.test(text) && !hasCredentials;
 
-  // Credentials always override generic signals - if a job requires MD, it's specialized
-  // even if the task is "bounding box" (e.g., medical image annotation by doctors)
-  const isSpecialized = hasCredentials || hasMedical || hasLegal || hasEngineering;
-  const isGeneric = hasGenericLabels || hasEntryLevel;
+  // Hard requirements (credentials + professional titles) ALWAYS override generic signals
+  const hasHardRequirements = hasCredentials || hasProfessionalTitle;
+  const hasSoftSpecialized = hasMedicalContext || hasLegalContext;
+  const isGeneric = hasGenericLabels || hasEntryLevel || hasGenericTask;
 
-  // Credentials are hard requirements - override generic signals
-  const jobClass = hasCredentials ? 'specialized' : (isSpecialized && !isGeneric ? 'specialized' : 'generic');
+  // Classification logic:
+  // 1. Hard requirements (credentials, professional titles) -> always specialized
+  // 2. Soft specialized without generic signals -> specialized
+  // 3. Everything else -> generic
+  const jobClass = hasHardRequirements ? 'specialized' : (hasSoftSpecialized && !isGeneric ? 'specialized' : 'generic');
 
   return {
     jobClass,
