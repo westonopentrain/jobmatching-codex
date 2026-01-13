@@ -6,6 +6,7 @@ import { getEnv, requireEnv } from '../utils/env';
 import { ensureAuthorized } from '../utils/auth';
 import { EMBEDDING_DIMENSION } from '../services/embeddings';
 import { fetchVectors, queryByVector, QueryMatch } from '../services/pinecone';
+import { getWeightProfile, JobClass } from '../services/job-classifier';
 
 const SCORE_FORMULA = 'two-channel-linear-v1';
 const MAX_CANDIDATES = 50_000;
@@ -18,6 +19,10 @@ const scoreRequestSchema = z.object({
   candidate_user_ids: z.array(z.string().min(1)).min(1).max(MAX_CANDIDATES),
   w_domain: z.number().nonnegative().default(1.0),
   w_task: z.number().nonnegative().default(0.0),
+  // When true, automatically determine weights based on job classification
+  // Specialized jobs use domain-heavy weights (0.85/0.15)
+  // Generic jobs use task-heavy weights (0.3/0.7)
+  auto_weights: z.boolean().default(false),
   topK: z.number().int().positive().max(MAX_CANDIDATES).optional(),
   threshold: z.number().min(-1).max(1).optional(),
 });
@@ -252,9 +257,14 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const { job_id, candidate_user_ids, threshold } = parsed.data;
+      const { job_id, candidate_user_ids, threshold, auto_weights } = parsed.data;
       const uniqueCandidates = Array.from(new Set(candidate_user_ids));
-      const weights = normalizeWeights(parsed.data.w_domain, parsed.data.w_task);
+
+      // Validate weights early if not using auto_weights (before fetching job vectors)
+      // This ensures we fail fast on invalid weights
+      if (!auto_weights) {
+        normalizeWeights(parsed.data.w_domain, parsed.data.w_task);
+      }
 
       const requestedTopK = parsed.data.topK ?? uniqueCandidates.length;
       const topKCap = Math.min(TOPK_CAP, uniqueCandidates.length);
@@ -296,6 +306,36 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // Extract job classification from metadata for smart matching
+      const jobMetadata = fetched[domainVectorId]?.metadata as Record<string, unknown> | undefined;
+      const jobClass = (jobMetadata?.job_class as JobClass | undefined) ?? 'generic';
+      const requiredCredentials = (jobMetadata?.required_credentials as string[] | undefined) ?? [];
+      const subjectMatterCodes = (jobMetadata?.subject_matter_codes as string[] | undefined) ?? [];
+
+      // Determine weights: auto_weights uses job classification, otherwise use request values
+      // Specialized jobs: domain-heavy (0.85 domain, 0.15 task) - expertise matters most
+      // Generic jobs: task-heavy (0.3 domain, 0.7 task) - labeling experience matters most
+      let weights: { domain: number; task: number };
+      let weightsSource: 'auto' | 'request';
+
+      if (auto_weights) {
+        const profile = getWeightProfile(jobClass);
+        weights = { domain: profile.w_domain, task: profile.w_task };
+        weightsSource = 'auto';
+        log.info(
+          {
+            event: 'match.auto_weights',
+            jobId: job_id,
+            jobClass,
+            weights,
+          },
+          'Using automatic weights based on job classification'
+        );
+      } else {
+        weights = normalizeWeights(parsed.data.w_domain, parsed.data.w_task);
+        weightsSource = 'request';
+      }
+
       const candidateChunks = chunkArray(uniqueCandidates, FILTER_CHUNK_SIZE);
 
       const sectionNamespace: { namespace?: string } = usersNamespace ? { namespace: usersNamespace } : {};
@@ -327,10 +367,12 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
         {
           event: 'match.score.complete',
           jobId: job_id,
+          jobClass,
           candidateCount: candidate_user_ids.length,
           uniqueCandidateCount: uniqueCandidates.length,
           topK,
           weights,
+          weightsSource,
           missingDomain: merged.missingDomain.length,
           missingTask: merged.missingTask.length,
           elapsedMs: elapsedRounded,
@@ -342,8 +384,17 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
       const responseBody: Record<string, unknown> = {
         status: 'ok',
         job_id,
+        // Job classification determines matching strategy:
+        // - specialized: domain expertise weighted heavily, credential matching recommended
+        // - generic: labeling experience weighted heavily, excludes overqualified domain experts
+        job_classification: {
+          job_class: jobClass,
+          required_credentials: requiredCredentials,
+          subject_matter_codes: subjectMatterCodes,
+        },
         w_domain: roundScore(weights.domain),
         w_task: roundScore(weights.task),
+        weights_source: weightsSource, // 'auto' if determined by job class, 'request' if caller specified
         results: merged.results,
         missing_vectors: {
           domain: merged.missingDomain,

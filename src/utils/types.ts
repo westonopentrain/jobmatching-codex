@@ -95,3 +95,59 @@ export interface CapsuleResponse {
   };
   updated_at: string;
 }
+
+// Classification types for job matching
+
+export type JobClass = 'specialized' | 'generic';
+export type UserClass = 'domain_expert' | 'general_labeler' | 'mixed';
+export type ExpertiseTier = 'entry' | 'intermediate' | 'expert' | 'specialist';
+
+/**
+ * Metadata stored with job vectors in Pinecone.
+ */
+export interface JobVectorMetadata {
+  job_id: string;
+  section: Section;
+  model: string;
+  type: 'job';
+
+  // Classification
+  job_class: JobClass;
+
+  // Requirements
+  required_credentials: string[];
+  subject_matter_codes: string[];
+  required_experience_years: number;
+  expertise_tier: ExpertiseTier;
+
+  // Geographic/language filters
+  countries: string[];
+  languages: string[];
+}
+
+/**
+ * Metadata stored with user vectors in Pinecone.
+ */
+export interface UserVectorMetadata {
+  user_id: string;
+  section: Section;
+  model: string;
+  type: 'user';
+
+  // Classification
+  user_class: UserClass;
+
+  // Credentials and expertise
+  credentials: string[];
+  domain_codes: string[];
+  estimated_experience_years: number;
+  expertise_tier: ExpertiseTier;
+
+  // Geographic/language
+  country?: string;
+  languages: string[];
+
+  // Labeling capability
+  has_labeling_experience: boolean;
+  task_capabilities: string[];
+}
