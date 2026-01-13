@@ -1,377 +1,281 @@
 /**
- * User classifier service.
+ * User classifier service using LLM-based classification.
  * Classifies users as 'domain_expert', 'general_labeler', or 'mixed'.
  */
 
 import { NormalizedUserProfile } from '../utils/types';
-import {
-  extractUserCredentials,
-  extractExperienceYears,
-  ExpertiseTier,
-} from './requirements-extractor';
-import { ADVANCED_CREDENTIALS, MID_CREDENTIALS } from '../config/subject-matter-taxonomy';
-import { extractLabelingEvidence } from '../utils/evidence';
+import { createTextResponse } from './openai-responses';
+import { resolveCapsuleModel } from './openai-model';
+import { withRetry } from '../utils/retry';
 import { logger } from '../utils/logger';
 
 export type UserClass = 'domain_expert' | 'general_labeler' | 'mixed';
+export type ExpertiseTier = 'entry' | 'intermediate' | 'expert' | 'specialist';
 
-export interface UserClassification {
+export interface UserClassificationResult {
   userClass: UserClass;
   confidence: number;
-  signals: string[];
-}
-
-export interface UserClassificationResult extends UserClassification {
   credentials: string[];
   domainCodes: string[];
   estimatedExperienceYears: number;
   expertiseTier: ExpertiseTier;
   hasLabelingExperience: boolean;
   taskCapabilities: string[];
+  signals: string[];
 }
 
-// Professional roles that indicate domain expertise
-const PROFESSIONAL_ROLES = new Set([
-  'physician',
-  'doctor',
-  'surgeon',
-  'attorney',
-  'lawyer',
-  'engineer',
-  'scientist',
-  'researcher',
-  'professor',
-  'consultant',
-  'specialist',
-  'architect',
-  'pharmacist',
-  'dentist',
-  'veterinarian',
-  'psychologist',
-  'psychiatrist',
-  'radiologist',
-  'cardiologist',
-  'oncologist',
-  'neurologist',
-  'anesthesiologist',
-  'pathologist',
-  'dermatologist',
-  'pediatrician',
-  'internist',
-  'accountant',
-  'auditor',
-  'actuary',
-  'analyst',
-  'investment banker',
-  'trader',
-]);
+const CLASSIFICATION_SYSTEM_MESSAGE = `You are a user classification system for an AI training marketplace. Your task is to analyze user profiles and classify them.
 
-// Labeling platform names that indicate labeling experience
-const LABELING_PLATFORMS = new Set([
-  'scale ai',
-  'scale',
-  'appen',
-  'remotasks',
-  'toloka',
-  'surge',
-  'surge ai',
-  'lxt',
-  'outlier',
-  'outlier ai',
-  'labelbox',
-  'label studio',
-  'cvat',
-  'superannotate',
-  'prodigy',
-  'doccano',
-  'amazon mechanical turk',
-  'mturk',
-  'clickworker',
-  'microworkers',
-  'sama',
-  'cloudfactory',
-  'hive',
-  'isahit',
-  'playment',
-  'humans in the loop',
-  'defined.ai',
-  'definedcrowd',
-]);
+CLASSIFICATION RULES:
+1. "domain_expert" - Users with professional credentials (MD, PhD, JD, PE, CPA) or specialized professional roles (physician, attorney, engineer, scientist, professor). These users have deep expertise in specific domains.
 
-// Job titles that indicate labeling work
-const LABELER_TITLES = new Set([
-  'data labeler',
-  'annotator',
-  'data annotator',
-  'rater',
-  'quality rater',
-  'search rater',
-  'ads rater',
-  'crowd worker',
-  'crowdworker',
-  'transcriber',
-  'transcriptionist',
-  'tagger',
-  'content moderator',
-  'ai trainer',
-  'data trainer',
-  'machine learning trainer',
-  'ml trainer',
-]);
+2. "general_labeler" - Users who primarily do data labeling/annotation work. They may have experience with platforms like Scale AI, Appen, Remotasks, Toloka, Surge AI, MTurk, Outlier AI, etc. Job titles include: data labeler, annotator, rater, transcriber, crowd worker.
 
-// Task capabilities that can be extracted from profiles
-const TASK_CAPABILITY_PATTERNS: Array<{ pattern: RegExp; capability: string }> = [
-  { pattern: /bounding\s*box/i, capability: 'bounding_box' },
-  { pattern: /image\s*classification/i, capability: 'image_classification' },
-  { pattern: /transcription/i, capability: 'transcription' },
-  { pattern: /\bner\b|named\s*entity/i, capability: 'ner' },
-  { pattern: /segmentation/i, capability: 'segmentation' },
-  { pattern: /polygon/i, capability: 'polygon_annotation' },
-  { pattern: /keypoint/i, capability: 'keypoint_annotation' },
-  { pattern: /sentiment/i, capability: 'sentiment_analysis' },
-  { pattern: /translation/i, capability: 'translation' },
-  { pattern: /summarization/i, capability: 'summarization' },
-  { pattern: /prompt\s*(?:writing|engineering)/i, capability: 'prompt_writing' },
-  { pattern: /response\s*(?:writing|rating|evaluation)/i, capability: 'response_evaluation' },
-  { pattern: /sft|supervised\s*fine[\s-]*tuning/i, capability: 'sft' },
-  { pattern: /rlhf|reinforcement\s*learning/i, capability: 'rlhf' },
-  { pattern: /code\s*(?:review|annotation)/i, capability: 'code_review' },
-  { pattern: /red[\s-]*team/i, capability: 'red_teaming' },
-  { pattern: /evaluation|rating|scoring/i, capability: 'evaluation' },
-  { pattern: /ocr/i, capability: 'ocr' },
-  { pattern: /data\s*collection/i, capability: 'data_collection' },
-];
+3. "mixed" - Users who have BOTH domain expertise AND labeling experience. Example: A physician who also does medical content annotation for AI training.
+
+LABELING PLATFORMS (if mentioned, indicates labeling experience):
+Scale AI, Appen, Remotasks, Toloka, Surge AI, LXT, Outlier AI, Labelbox, Amazon Mechanical Turk, MTurk, Clickworker, Sama, CloudFactory, Hive, Defined.ai
+
+TASK CAPABILITIES to detect:
+bounding_box, image_classification, transcription, ner, segmentation, polygon_annotation, keypoint_annotation, sentiment_analysis, translation, summarization, prompt_writing, response_evaluation, sft, rlhf, code_review, red_teaming, evaluation, ocr, data_collection
+
+Return ONLY valid JSON in this exact format:
+{
+  "user_class": "domain_expert" | "general_labeler" | "mixed",
+  "confidence": 0.0-1.0,
+  "credentials": ["MD", "PhD", etc] or [],
+  "domain_codes": ["medical:obgyn", "legal:corporate", "engineering:civil", etc] or [],
+  "estimated_experience_years": number or 0,
+  "expertise_tier": "entry" | "intermediate" | "expert" | "specialist",
+  "has_labeling_experience": true | false,
+  "task_capabilities": ["bounding_box", "transcription", etc] or [],
+  "signals": ["brief explanation of key signals detected"]
+}
+
+Domain code format: "domain:specialty" where domain is one of: medical, legal, finance, engineering, science, education, technology. If no specific specialty, use "domain:general".
+
+Expertise tier rules:
+- "specialist": PhD, or advanced credential (MD/JD) with 5+ years
+- "expert": Advanced credential OR 5+ years experience
+- "intermediate": Mid-level credential (MS/MBA) OR 2+ years experience
+- "entry": Less than 2 years, no significant credentials`;
+
+const CLASSIFICATION_TEMPERATURE = 0.1;
+const CLASSIFICATION_MAX_TOKENS = 800;
 
 /**
- * Extract task capabilities from profile text.
+ * Build user profile text for classification.
  */
-function extractTaskCapabilities(text: string): string[] {
-  const capabilities: string[] = [];
+function buildUserText(profile: NormalizedUserProfile): string {
+  const parts: string[] = [];
 
-  for (const { pattern, capability } of TASK_CAPABILITY_PATTERNS) {
-    if (pattern.test(text)) {
-      if (!capabilities.includes(capability)) {
-        capabilities.push(capability);
-      }
-    }
+  if (profile.resumeText) {
+    parts.push(`Resume:\n${profile.resumeText}`);
   }
-
-  return capabilities;
-}
-
-/**
- * Check if text contains labeling platform mentions.
- * Uses word boundaries to avoid false positives (e.g., "surgeon" matching "surge").
- */
-function hasLabelingPlatformExperience(text: string): boolean {
-  const lower = text.toLowerCase();
-  return Array.from(LABELING_PLATFORMS).some((platform) => {
-    // Use word boundary regex to avoid substring matches
-    const regex = new RegExp(`\\b${escapeRegex(platform)}\\b`, 'i');
-    return regex.test(lower);
-  });
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Check if text contains labeler job titles.
- */
-function hasLabelerTitle(text: string): boolean {
-  const lower = text.toLowerCase();
-  return Array.from(LABELER_TITLES).some((title) => lower.includes(title));
-}
-
-/**
- * Check if text contains professional role mentions.
- */
-function hasProfessionalRole(text: string): boolean {
-  const lower = text.toLowerCase();
-  // Use word boundaries to avoid false positives
-  return Array.from(PROFESSIONAL_ROLES).some((role) => {
-    const regex = new RegExp(`\\b${role}\\b`, 'i');
-    return regex.test(lower);
-  });
-}
-
-/**
- * Determine expertise tier for a user based on credentials and experience.
- */
-function determineUserExpertiseTier(
-  credentials: string[],
-  experienceYears: number
-): ExpertiseTier {
-  const hasAdvanced = credentials.some((c) => ADVANCED_CREDENTIALS.has(c.toUpperCase()));
-  const hasMid = credentials.some((c) => MID_CREDENTIALS.has(c.toUpperCase()));
-
-  if (hasAdvanced && experienceYears >= 10) {
-    return 'specialist';
+  if (profile.workExperience.length > 0) {
+    parts.push(`Work Experience:\n${profile.workExperience.join('\n')}`);
   }
-  if (hasAdvanced || experienceYears >= 5) {
-    return 'expert';
+  if (profile.education.length > 0) {
+    parts.push(`Education:\n${profile.education.join('\n')}`);
   }
-  if (hasMid || experienceYears >= 2) {
-    return 'intermediate';
-  }
-  return 'entry';
-}
-
-/**
- * Classify a user as domain expert, general labeler, or mixed.
- */
-export function classifyUser(profile: NormalizedUserProfile): UserClassificationResult {
-  const signals: string[] = [];
-  let expertScore = 0;
-  let labelerScore = 0;
-
-  // Combine all text sources for analysis
-  const fullText = [
-    profile.resumeText,
-    ...profile.workExperience,
-    ...profile.education,
-    ...profile.labelingExperience,
-  ].join('\n');
-
-  // Extract credentials and experience
-  const { credentials, estimatedExperienceYears, domainCodes } = extractUserCredentials(fullText);
-
-  // Signal 1: Professional credentials
-  const hasAdvancedCredential = credentials.some((c) => ADVANCED_CREDENTIALS.has(c.toUpperCase()));
-  const hasMidCredential = credentials.some((c) => MID_CREDENTIALS.has(c.toUpperCase()));
-
-  if (hasAdvancedCredential) {
-    expertScore += 4;
-    const advancedCreds = credentials.filter((c) => ADVANCED_CREDENTIALS.has(c.toUpperCase()));
-    signals.push(`advanced_credentials:${advancedCreds.join(',')}`);
-  }
-  if (hasMidCredential) {
-    expertScore += 2;
-    const midCreds = credentials.filter((c) => MID_CREDENTIALS.has(c.toUpperCase()));
-    signals.push(`mid_credentials:${midCreds.join(',')}`);
-  }
-
-  // Signal 2: Professional roles in experience
-  if (hasProfessionalRole(fullText)) {
-    expertScore += 2;
-    signals.push('professional_role_detected');
-  }
-
-  // Signal 3: Labeling evidence from our existing extractor
-  const labelingEvidence = extractLabelingEvidence(fullText);
-  const hasLabelingEvidenceFromExtractor =
-    labelingEvidence.tokens.length > 0 || labelingEvidence.phrases.length > 0;
-
-  if (hasLabelingEvidenceFromExtractor) {
-    labelerScore += 2;
-    signals.push('labeling_evidence_detected');
-  }
-
-  // Signal 4: Labeling platform experience
-  if (hasLabelingPlatformExperience(fullText)) {
-    labelerScore += 3;
-    signals.push('labeling_platform_experience');
-  }
-
-  // Signal 5: Labeler job titles
-  if (hasLabelerTitle(fullText)) {
-    labelerScore += 3;
-    signals.push('labeler_title_detected');
-  }
-
-  // Signal 6: Explicit labeling experience field provided
   if (profile.labelingExperience.length > 0) {
-    const labelingText = profile.labelingExperience.join(' ');
-    if (labelingText.trim().length > 20) {
-      // Meaningful labeling experience
-      labelerScore += 2;
-      signals.push('labeling_experience_field_populated');
+    parts.push(`Labeling Experience:\n${profile.labelingExperience.join('\n')}`);
+  }
+  if (profile.languages.length > 0) {
+    parts.push(`Languages: ${profile.languages.join(', ')}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+/**
+ * Parse the LLM response into a structured result.
+ */
+function parseClassificationResponse(responseText: string): UserClassificationResult {
+  // Extract JSON from response (handle markdown code blocks)
+  let jsonText = responseText.trim();
+  if (jsonText.startsWith('```')) {
+    const match = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (match) {
+      jsonText = match[1]!.trim();
     }
   }
 
-  // Signal 7: Domain codes detected
-  if (domainCodes.length > 0) {
-    expertScore += 1;
-    signals.push(`domain_codes:${domainCodes.slice(0, 3).join(',')}`);
-  }
+  const parsed = JSON.parse(jsonText);
 
-  // Signal 8: Experience years
-  if (estimatedExperienceYears >= 10) {
-    expertScore += 2;
-    signals.push(`experience:${estimatedExperienceYears}yr`);
-  } else if (estimatedExperienceYears >= 5) {
-    expertScore += 1;
-    signals.push(`experience:${estimatedExperienceYears}yr`);
-  }
+  // Validate and normalize the response
+  const validClasses: UserClass[] = ['domain_expert', 'general_labeler', 'mixed'];
+  const userClass: UserClass = validClasses.includes(parsed.user_class)
+    ? parsed.user_class
+    : 'general_labeler';
 
-  // Extract task capabilities
-  const taskCapabilities = extractTaskCapabilities(fullText);
-  if (taskCapabilities.length > 0) {
-    labelerScore += 1;
-    signals.push(`task_capabilities:${taskCapabilities.slice(0, 3).join(',')}`);
-  }
+  const confidence = typeof parsed.confidence === 'number'
+    ? Math.max(0, Math.min(1, parsed.confidence))
+    : 0.5;
 
-  // Determine expertise tier
-  const expertiseTier = determineUserExpertiseTier(credentials, estimatedExperienceYears);
+  const credentials: string[] = Array.isArray(parsed.credentials)
+    ? parsed.credentials.map((c: unknown) => String(c).toUpperCase())
+    : [];
 
-  // Determine labeling experience
-  const hasLabelingExperience =
-    hasLabelingEvidenceFromExtractor ||
-    hasLabelingPlatformExperience(fullText) ||
-    hasLabelerTitle(fullText) ||
-    profile.labelingExperience.length > 0;
+  const domainCodes: string[] = Array.isArray(parsed.domain_codes)
+    ? parsed.domain_codes.filter((c: unknown) => typeof c === 'string')
+    : [];
 
-  // Decision: Users can be "mixed" if they have both expert and labeler signals
-  let userClass: UserClass;
-  const totalScore = expertScore + labelerScore;
-  let confidence: number;
+  const estimatedExperienceYears = typeof parsed.estimated_experience_years === 'number'
+    ? Math.max(0, parsed.estimated_experience_years)
+    : 0;
 
-  if (expertScore >= 4 && labelerScore >= 3) {
-    // Strong signals for both - this is a domain expert who also does labeling
-    userClass = 'mixed';
-    confidence = Math.min(expertScore, labelerScore) / Math.max(totalScore, 1);
-    signals.push('classification:mixed_both_signals_strong');
-  } else if (expertScore > labelerScore && expertScore >= 3) {
-    // Primarily a domain expert
-    userClass = 'domain_expert';
-    confidence = expertScore / Math.max(totalScore, 1);
-  } else if (labelerScore > 0) {
-    // Has labeling experience
-    userClass = 'general_labeler';
-    confidence = labelerScore / Math.max(totalScore, 1);
-  } else {
-    // Default to general labeler if no strong signals
-    userClass = 'general_labeler';
-    confidence = 0.5;
-    signals.push('classification:default_no_strong_signals');
-  }
+  const validTiers: ExpertiseTier[] = ['entry', 'intermediate', 'expert', 'specialist'];
+  const expertiseTier: ExpertiseTier = validTiers.includes(parsed.expertise_tier)
+    ? parsed.expertise_tier
+    : 'entry';
 
-  // Log classification for debugging
-  logger.debug(
-    {
-      event: 'user.classified',
-      userId: profile.userId,
-      userClass,
-      confidence,
-      expertScore,
-      labelerScore,
-      signals,
-    },
-    'User classification complete'
-  );
+  const hasLabelingExperience = parsed.has_labeling_experience === true;
+
+  const taskCapabilities: string[] = Array.isArray(parsed.task_capabilities)
+    ? parsed.task_capabilities.filter((c: unknown) => typeof c === 'string')
+    : [];
+
+  const signals: string[] = Array.isArray(parsed.signals)
+    ? parsed.signals.map((s: unknown) => String(s))
+    : [];
 
   return {
     userClass,
     confidence: Math.round(confidence * 100) / 100,
-    signals,
     credentials,
     domainCodes,
     estimatedExperienceYears,
     expertiseTier,
     hasLabelingExperience,
     taskCapabilities,
+    signals,
   };
+}
+
+/**
+ * Classify a user using LLM.
+ */
+export async function classifyUser(profile: NormalizedUserProfile): Promise<UserClassificationResult> {
+  const model = resolveCapsuleModel();
+  const userText = buildUserText(profile);
+
+  // Handle empty profiles
+  if (!userText.trim()) {
+    return {
+      userClass: 'general_labeler',
+      confidence: 0.5,
+      credentials: [],
+      domainCodes: [],
+      estimatedExperienceYears: 0,
+      expertiseTier: 'entry',
+      hasLabelingExperience: false,
+      taskCapabilities: [],
+      signals: ['empty_profile'],
+    };
+  }
+
+  const userMessage = `Classify this user profile:\n\n${userText}`;
+
+  try {
+    const responseText = await withRetry(
+      () =>
+        createTextResponse({
+          model,
+          messages: [
+            { role: 'system', content: CLASSIFICATION_SYSTEM_MESSAGE },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: CLASSIFICATION_TEMPERATURE,
+          maxOutputTokens: CLASSIFICATION_MAX_TOKENS,
+        }),
+      { maxAttempts: 2, baseDelayMs: 1000 }
+    );
+
+    const result = parseClassificationResponse(responseText);
+
+    logger.info(
+      {
+        event: 'user.classified',
+        userId: profile.userId,
+        userClass: result.userClass,
+        confidence: result.confidence,
+        expertiseTier: result.expertiseTier,
+        credentials: result.credentials,
+        hasLabelingExperience: result.hasLabelingExperience,
+      },
+      'User classification complete'
+    );
+
+    return result;
+  } catch (error) {
+    logger.error(
+      {
+        event: 'user.classification_failed',
+        userId: profile.userId,
+        error: (error as Error).message,
+      },
+      'User classification failed, using fallback'
+    );
+
+    // Fallback to simple heuristics if LLM fails
+    return fallbackClassification(profile);
+  }
+}
+
+/**
+ * Simple fallback classification if LLM fails.
+ */
+function fallbackClassification(profile: NormalizedUserProfile): UserClassificationResult {
+  const text = [
+    profile.resumeText,
+    ...profile.workExperience,
+    ...profile.education,
+    ...profile.labelingExperience,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  // Check for obvious domain expert signals
+  const hasCredentials = /\b(md|phd|jd|pe|cpa|rn|np)\b/i.test(text);
+  const hasProfessionalRole = /\b(physician|doctor|attorney|lawyer|engineer|scientist|professor)\b/i.test(text);
+
+  // Check for obvious labeler signals
+  const hasLabelingPlatform = /\b(scale ai|appen|remotasks|toloka|surge ai|mturk|mechanical turk|outlier)\b/i.test(text);
+  const hasLabelerTitle = /\b(annotator|labeler|rater|transcriber|crowd worker)\b/i.test(text);
+  const hasLabelingExperienceField = profile.labelingExperience.length > 0;
+
+  const isDomainExpert = hasCredentials || hasProfessionalRole;
+  const isLabeler = hasLabelingPlatform || hasLabelerTitle || hasLabelingExperienceField;
+
+  let userClass: UserClass;
+  if (isDomainExpert && isLabeler) {
+    userClass = 'mixed';
+  } else if (isDomainExpert) {
+    userClass = 'domain_expert';
+  } else {
+    userClass = 'general_labeler';
+  }
+
+  return {
+    userClass,
+    confidence: 0.5,
+    credentials: [],
+    domainCodes: [],
+    estimatedExperienceYears: 0,
+    expertiseTier: 'entry',
+    hasLabelingExperience: isLabeler,
+    taskCapabilities: [],
+    signals: ['fallback_classification'],
+  };
+}
+
+/**
+ * Synchronous classification for testing (uses fallback only).
+ */
+export function classifyUserSync(profile: NormalizedUserProfile): UserClassificationResult {
+  return fallbackClassification(profile);
 }
 
 /**

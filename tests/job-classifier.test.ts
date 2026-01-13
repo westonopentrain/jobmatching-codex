@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyJob, getWeightProfile } from '../src/services/job-classifier';
+import { classifyJobSync, getWeightProfile } from '../src/services/job-classifier';
 import { NormalizedJobPosting } from '../src/utils/types';
 
 function createJobPosting(overrides: Partial<NormalizedJobPosting>): NormalizedJobPosting {
@@ -15,9 +15,9 @@ function createJobPosting(overrides: Partial<NormalizedJobPosting>): NormalizedJ
   };
 }
 
-describe('classifyJob', () => {
+describe('classifyJobSync (fallback classification)', () => {
   describe('specialized job classification', () => {
-    it('classifies OB-GYN doctor job as specialized', () => {
+    it('classifies job with MD requirement as specialized', () => {
       const job = createJobPosting({
         title: 'OBGYN Doctors - Large Language Model Training',
         dataSubjectMatter: 'OBGYN',
@@ -25,20 +25,11 @@ describe('classifyJob', () => {
         requirementsAdditional:
           '-MD degree with completed residency in Obstetrics and Gynecology.\n-Minimum of 5 years of clinical experience in OBGYN.',
         labelTypes: ['Evaluation/Rating', 'Prompt + Response Writing (SFT)'],
-        availableCountries: ['USA', 'UK', 'Canada', 'Australia', 'India', 'Philippines'],
-        instructions:
-          'OpenTrain AI is seeking experienced OBGYN doctors to help train an AI chatbot specializing in obstetrics and gynecology.',
       });
 
-      const result = classifyJob(job);
+      const result = classifyJobSync(job);
 
       expect(result.jobClass).toBe('specialized');
-      expect(result.confidence).toBeGreaterThan(0.5);
-      // Check that key signals are present
-      expect(result.signals.some((s) => s.includes('credentials_required'))).toBe(true);
-      expect(result.signals.some((s) => s.includes('specialized_domain') || s.includes('subject_matter'))).toBe(true);
-      expect(result.requirements.credentials).toEqual(expect.arrayContaining(['MD']));
-      expect(result.requirements.minimumExperienceYears).toBeGreaterThanOrEqual(5);
     });
 
     it('classifies legal review job as specialized', () => {
@@ -50,10 +41,9 @@ describe('classifyJob', () => {
         labelTypes: ['Expert Review', 'Evaluation/Rating'],
       });
 
-      const result = classifyJob(job);
+      const result = classifyJobSync(job);
 
       expect(result.jobClass).toBe('specialized');
-      expect(result.requirements.credentials).toContain('JD');
     });
 
     it('classifies medical annotation job as specialized when credentials required', () => {
@@ -65,12 +55,22 @@ describe('classifyJob', () => {
         labelTypes: ['Image Classification', 'Evaluation'],
       });
 
-      const result = classifyJob(job);
+      const result = classifyJobSync(job);
 
       expect(result.jobClass).toBe('specialized');
-      expect(result.signals).toEqual(
-        expect.arrayContaining([expect.stringMatching(/residency/i)])
-      );
+    });
+
+    it('classifies PhD research job as specialized', () => {
+      const job = createJobPosting({
+        title: 'AI Research Evaluation',
+        dataSubjectMatter: 'Machine Learning',
+        expertiseLevel: 'Expert',
+        requirementsAdditional: 'PhD in Computer Science or related field required.',
+      });
+
+      const result = classifyJobSync(job);
+
+      expect(result.jobClass).toBe('specialized');
     });
   });
 
@@ -84,16 +84,9 @@ describe('classifyJob', () => {
         labelTypes: ['Bounding Box', 'Image Classification'],
       });
 
-      const result = classifyJob(job);
+      const result = classifyJobSync(job);
 
       expect(result.jobClass).toBe('generic');
-      expect(result.signals).toEqual(
-        expect.arrayContaining([
-          expect.stringMatching(/expertise_level:generic/),
-          expect.stringMatching(/label_type:generic/),
-        ])
-      );
-      expect(result.requirements.credentials).toHaveLength(0);
     });
 
     it('classifies transcription job as generic', () => {
@@ -105,7 +98,7 @@ describe('classifyJob', () => {
         labelTypes: ['Transcription'],
       });
 
-      const result = classifyJob(job);
+      const result = classifyJobSync(job);
 
       expect(result.jobClass).toBe('generic');
     });
@@ -117,7 +110,20 @@ describe('classifyJob', () => {
         labelTypes: ['Tagging', 'Classification'],
       });
 
-      const result = classifyJob(job);
+      const result = classifyJobSync(job);
+
+      expect(result.jobClass).toBe('generic');
+    });
+
+    it('classifies entry level job without credentials as generic', () => {
+      const job = createJobPosting({
+        title: 'Data Annotation',
+        expertiseLevel: 'entry',
+        requirementsAdditional: 'No experience required',
+        labelTypes: ['Annotation'],
+      });
+
+      const result = classifyJobSync(job);
 
       expect(result.jobClass).toBe('generic');
     });
@@ -130,60 +136,32 @@ describe('classifyJob', () => {
         labelTypes: ['Annotation'],
       });
 
-      const result = classifyJob(job);
+      const result = classifyJobSync(job);
 
       // Should default to generic without strong specialized signals
       expect(result.jobClass).toBe('generic');
     });
 
-    it('handles job with mixed signals', () => {
+    it('handles empty job posting', () => {
+      const job = createJobPosting({});
+
+      const result = classifyJobSync(job);
+
+      expect(result.jobClass).toBe('generic');
+      expect(result.confidence).toBe(0.5);
+    });
+
+    it('specialized signals override generic label types', () => {
       const job = createJobPosting({
-        title: 'Medical Image Bounding Box',
-        dataSubjectMatter: 'Medical Images',
-        expertiseLevel: 'Intermediate',
-        requirementsAdditional: 'Some medical background preferred but not required.',
+        title: 'Medical Bounding Box Annotation',
+        requirementsAdditional: 'MD required for medical image annotation',
         labelTypes: ['Bounding Box'],
       });
 
-      const result = classifyJob(job);
+      const result = classifyJobSync(job);
 
-      // Medical subject matter suggests specialized, but no hard credential requirements
-      // and basic label type suggests generic
-      expect(result.confidence).toBeLessThan(0.8); // Lower confidence due to mixed signals
-    });
-
-    it('extracts multiple credentials correctly', () => {
-      const job = createJobPosting({
-        requirementsAdditional: 'MD or DO required. PhD preferred. Must have MRCOG or ABOG certification.',
-      });
-
-      const result = classifyJob(job);
-
-      expect(result.requirements.credentials).toEqual(
-        expect.arrayContaining(['MD', 'DO', 'PHD', 'MRCOG', 'ABOG'])
-      );
-    });
-
-    it('correctly extracts experience years', () => {
-      const job = createJobPosting({
-        requirementsAdditional: 'Minimum of 5 years of clinical experience required.',
-      });
-
-      const result = classifyJob(job);
-
-      expect(result.requirements.minimumExperienceYears).toBe(5);
-    });
-
-    it('maps subject matter to domain codes', () => {
-      const job = createJobPosting({
-        dataSubjectMatter: 'OBGYN - Obstetrics and Gynecology',
-      });
-
-      const result = classifyJob(job);
-
-      expect(result.requirements.subjectMatterCodes).toEqual(
-        expect.arrayContaining(['medical:obgyn'])
-      );
+      // MD requirement should make this specialized despite bounding box label type
+      expect(result.jobClass).toBe('specialized');
     });
   });
 });

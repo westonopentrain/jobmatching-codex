@@ -142,8 +142,10 @@ export function extractExperienceYears(text: string): number {
     /minimum\s+(?:of\s+)?(\d+)\s*(?:\+)?\s*years?/gi,
     // "at least X years"
     /at\s+least\s+(\d+)\s*(?:\+)?\s*years?/gi,
-    // "X+ years of experience"
-    /(\d+)\s*\+?\s*years?\s+(?:of\s+)?(?:experience|practicing|clinical)/gi,
+    // "X+ years of experience" or "X+ years of [word] experience"
+    /(\d+)\s*\+?\s*years?\s+(?:of\s+)?(?:\w+\s+)?(?:experience|practicing|clinical)/gi,
+    // "X+ years of professional experience"
+    /(\d+)\s*\+?\s*years?\s+of\s+(?:professional|industry|work)\s+experience/gi,
     // "X years experience required"
     /(\d+)\s*years?\s+(?:of\s+)?experience\s+required/gi,
     // "requires X years"
@@ -152,6 +154,10 @@ export function extractExperienceYears(text: string): number {
     /over\s+(\d+)\s*years?/gi,
     // "X-Y years" (take minimum)
     /(\d+)\s*[-–]\s*\d+\s*years?/gi,
+    // "X+ years post-PhD" or "X years post-doc"
+    /(\d+)\s*\+?\s*years?\s+post[\s-]?(?:phd|doc|doctoral)/gi,
+    // Simply "X+ years" at word boundary (more permissive)
+    /\b(\d+)\s*\+\s*years?\b/gi,
   ];
 
   let maxRequired = 0;
@@ -181,17 +187,42 @@ export function determineExpertiseTier(
   const level = (expertiseLevel ?? '').toLowerCase();
 
   // Check for explicit tier markers in expertise level
-  if (/specialist|senior|advanced|expert/.test(level)) {
+  if (/specialist|senior|advanced/.test(level)) {
     return 'specialist';
   }
-  if (/expert|experienced|professional|mid[\s-]?level/.test(level)) {
+  if (/expert|experienced|professional/.test(level)) {
     return 'expert';
   }
-  if (/intermediate|some\s+experience|junior/.test(level)) {
+  if (/intermediate|some\s+experience|junior|mid[\s-]?level/.test(level)) {
     return 'intermediate';
   }
   if (/entry|beginner|no\s+experience|any\s+level|less\s+than\s+1/.test(level)) {
     return 'entry';
+  }
+
+  // Check for PhD requirement - always specialist level
+  if (/phd\s+required|requires?\s+(?:a\s+)?phd|phd\s+or\s+master/i.test(level)) {
+    return 'specialist';
+  }
+
+  // Infer from credentials first (PhD = specialist, MD/JD = expert)
+  if (credentials && credentials.length > 0) {
+    const hasPhD = credentials.some((c) => ['PHD', 'PH.D'].includes(c.toUpperCase()));
+    if (hasPhD) {
+      return 'specialist';
+    }
+    const hasAdvanced = credentials.some((c) => ADVANCED_CREDENTIALS.has(c.toUpperCase()));
+    if (hasAdvanced) {
+      // MD/JD with 5+ years = specialist, otherwise expert
+      if (experienceYears && experienceYears >= 5) {
+        return 'specialist';
+      }
+      return 'expert';
+    }
+    const hasMid = credentials.some((c) => MID_CREDENTIALS.has(c.toUpperCase()));
+    if (hasMid) {
+      return 'intermediate';
+    }
   }
 
   // Infer from experience years
@@ -203,18 +234,6 @@ export function determineExpertiseTier(
   }
   if (experienceYears && experienceYears >= 2) {
     return 'intermediate';
-  }
-
-  // High credentials imply higher tier even without explicit level
-  if (credentials && credentials.length > 0) {
-    const hasAdvanced = credentials.some((c) => ADVANCED_CREDENTIALS.has(c.toUpperCase()));
-    if (hasAdvanced) {
-      return 'expert';
-    }
-    const hasMid = credentials.some((c) => MID_CREDENTIALS.has(c.toUpperCase()));
-    if (hasMid) {
-      return 'intermediate';
-    }
   }
 
   return 'entry';
