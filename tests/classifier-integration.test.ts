@@ -1,5 +1,5 @@
 /**
- * Integration tests for job and user classifiers with realistic STEM job postings.
+ * Integration tests for job classifier with realistic STEM job postings.
  * Tests specialized engineering, coding, and science roles for LLM evaluation/training.
  *
  * NOTE: These tests use the synchronous fallback classification which uses heuristics,
@@ -9,8 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { classifyJobSync, getWeightProfile } from '../src/services/job-classifier';
-import { classifyUserSync, shouldExcludeFromGenericJob, isEligibleForSpecializedJob } from '../src/services/user-classifier';
-import { NormalizedJobPosting, NormalizedUserProfile } from '../src/utils/types';
+import { NormalizedJobPosting } from '../src/utils/types';
 
 // Helper to create normalized job postings
 function createJob(overrides: Partial<NormalizedJobPosting>): NormalizedJobPosting {
@@ -22,19 +21,6 @@ function createJob(overrides: Partial<NormalizedJobPosting>): NormalizedJobPosti
     additionalSkills: [],
     promptText: '',
     sourceText: '',
-    ...overrides,
-  };
-}
-
-// Helper to create normalized user profiles
-function createUser(overrides: Partial<NormalizedUserProfile>): NormalizedUserProfile {
-  return {
-    userId: 'test-user',
-    resumeText: '',
-    workExperience: [],
-    education: [],
-    labelingExperience: [],
-    languages: [],
     ...overrides,
   };
 }
@@ -204,146 +190,7 @@ describe('Generic Labeling Job Classifications', () => {
   });
 });
 
-describe('User Classification for Engineering Domains', () => {
-  describe('Qualified Civil Engineer', () => {
-    const civilEngineer = createUser({
-      userId: 'civil-eng-001',
-      resumeText: `
-        Licensed Professional Engineer (PE) with 12 years of experience in civil engineering.
-        PhD in Civil Engineering, Stanford University.
-        Senior Structural Engineer at AECOM.
-      `,
-      workExperience: ['Senior Structural Engineer at AECOM'],
-      education: ['PhD Civil Engineering, Stanford University'],
-    });
-
-    it('classifies civil engineer as domain expert', () => {
-      const result = classifyUserSync(civilEngineer);
-
-      expect(result.userClass).toBe('domain_expert');
-      expect(result.hasLabelingExperience).toBe(false);
-    });
-
-    it('should be excluded from basic bounding box jobs', () => {
-      const userResult = classifyUserSync(civilEngineer);
-
-      expect(shouldExcludeFromGenericJob(userResult)).toBe(true);
-    });
-  });
-
-  describe('Senior Software Engineer', () => {
-    const softwareEngineer = createUser({
-      userId: 'swe-001',
-      resumeText: `
-        Senior Software Engineer with 8 years of experience at top tech companies.
-        Staff Engineer at Google, leading ML infrastructure team.
-        MS Computer Science, MIT.
-      `,
-      workExperience: ['Staff Engineer at Google'],
-      education: ['MS Computer Science, MIT'],
-    });
-
-    it('classifies software engineer as domain expert', () => {
-      const result = classifyUserSync(softwareEngineer);
-
-      expect(result.userClass).toBe('domain_expert');
-    });
-  });
-
-  describe('ML Researcher with Labeling Experience', () => {
-    const mlResearcher = createUser({
-      userId: 'ml-researcher-001',
-      resumeText: `
-        Machine Learning Researcher and AI Trainer at OpenAI.
-        PhD in Computer Science, Stanford University.
-        RLHF data collection lead. Scale AI expert annotator.
-      `,
-      workExperience: ['Research Scientist at OpenAI'],
-      education: ['PhD Computer Science, Stanford University'],
-      labelingExperience: [
-        'RLHF data collection for GPT-4',
-        'Scale AI code annotation',
-      ],
-    });
-
-    it('classifies ML researcher with labeling experience as mixed', () => {
-      const result = classifyUserSync(mlResearcher);
-
-      expect(result.userClass).toBe('mixed');
-      expect(result.hasLabelingExperience).toBe(true);
-    });
-
-    it('should NOT be excluded from generic jobs (has labeling experience)', () => {
-      const result = classifyUserSync(mlResearcher);
-
-      expect(shouldExcludeFromGenericJob(result)).toBe(false);
-    });
-  });
-
-  describe('General Data Labeler', () => {
-    const dataLabeler = createUser({
-      userId: 'labeler-001',
-      resumeText: `
-        Experienced data annotator with 3 years of remote work experience.
-        Platforms: Scale AI, Appen, Remotasks, Amazon MTurk.
-        Completed 10,000+ annotation tasks.
-      `,
-      labelingExperience: [
-        'Scale AI - Image annotation, bounding boxes',
-        'Appen - Audio transcription',
-        'MTurk - Various annotation tasks',
-      ],
-    });
-
-    it('classifies data labeler as general labeler', () => {
-      const result = classifyUserSync(dataLabeler);
-
-      expect(result.userClass).toBe('general_labeler');
-      expect(result.hasLabelingExperience).toBe(true);
-    });
-
-    it('should NOT be excluded from generic jobs', () => {
-      const result = classifyUserSync(dataLabeler);
-
-      expect(shouldExcludeFromGenericJob(result)).toBe(false);
-    });
-  });
-});
-
-describe('Cross-Domain Matching Scenarios', () => {
-  it('general labeler should be matched to generic jobs', () => {
-    const labeler = createUser({
-      resumeText: 'Freelance annotator working on Scale AI and Appen.',
-      labelingExperience: ['Bounding box annotation', 'Image classification'],
-    });
-
-    const labelerResult = classifyUserSync(labeler);
-
-    const boundingBoxJob = createJob({
-      title: 'Image Annotator',
-      expertiseLevel: 'Entry Level',
-      labelTypes: ['Bounding Box'],
-    });
-
-    const jobResult = classifyJobSync(boundingBoxJob);
-
-    expect(labelerResult.userClass).toBe('general_labeler');
-    expect(jobResult.jobClass).toBe('generic');
-    expect(shouldExcludeFromGenericJob(labelerResult)).toBe(false);
-  });
-
-  it('PhD engineer should NOT receive generic bounding box job', () => {
-    const phdEngineer = createUser({
-      resumeText: 'PhD in Electrical Engineering. Professor at Stanford. 20 years experience.',
-      education: ['PhD Electrical Engineering, Stanford'],
-    });
-
-    const result = classifyUserSync(phdEngineer);
-
-    expect(result.userClass).toBe('domain_expert');
-    expect(shouldExcludeFromGenericJob(result)).toBe(true);
-  });
-
+describe('Credential Override Scenarios', () => {
   it('credential requirement overrides generic label type', () => {
     const medicalAnnotationJob = createJob({
       title: 'Medical Image Annotation',
