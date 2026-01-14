@@ -108,6 +108,63 @@ Jobs that operators upsert from Bubble now save the capsule metadata on the **Jo
 
 Persist only the capsule texts, vector IDs, and timestamp—embedding vectors continue to live exclusively in Pinecone.
 
+## Scoring Data Types
+
+Two data types work together to store matching results:
+
+### JobScoreRun (Parent)
+
+Stores metadata about each scoring run. One record per API call.
+
+| Field name          | Type        | Description |
+| ------------------- | ----------- | ----------- |
+| `job`               | Job         | The job that was scored |
+| `w_domain`          | number      | Domain weight used (0-1) |
+| `w_task`            | number      | Task weight used (0-1) |
+| `threshold_used`    | number      | Score threshold if specified |
+| `results_count`     | number      | Total results returned |
+| `count_gte_threshold` | number    | Count of results >= threshold |
+| `elapsed_ms`        | number      | API response time |
+| `request_id`        | text        | API request ID for debugging |
+| `requested_at`      | date        | When the scoring was run |
+
+### ApplicantScore (Child)
+
+Stores individual user scores, linked to a JobScoreRun. One record per user scored.
+
+| Field name        | Type         | Description |
+| ----------------- | ------------ | ----------- |
+| `run`             | JobScoreRun  | Parent scoring run |
+| `job`             | Job          | The job (denormalized for easier queries) |
+| `user`            | User         | The scored user |
+| `s_domain`        | number       | Domain similarity score (0-1) |
+| `s_task`          | number       | Task similarity score (0-1) |
+| `final`           | number       | Weighted final score |
+| `rank`            | number       | Position in results (1 = highest) |
+| `above_threshold` | yes/no       | Whether score >= threshold |
+
+### Relationship
+
+```
+JobScoreRun (1 per scoring request)
+    ├── ApplicantScore (user A, rank 1)
+    ├── ApplicantScore (user B, rank 2)
+    ├── ApplicantScore (user C, rank 3)
+    └── ... (one per candidate)
+```
+
+### Usage
+
+**To display scores for a job:**
+```
+Search for ApplicantScores where run = [JobScoreRun for this job]:sorted by rank
+```
+
+**To compare scoring runs:**
+```
+Search for JobScoreRuns where job = [current job]:sorted by requested_at descending
+```
+
 ## Render service reference
 
 | Property | Value |
