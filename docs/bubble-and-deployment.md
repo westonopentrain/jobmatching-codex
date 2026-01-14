@@ -186,3 +186,49 @@ Use the URL as the base endpoint for Bubble, Postman, or curl smoke tests. The S
 | `language` | User's lblr_Languages | Yes |
 
 > **Note:** If `resume_text` is empty, the API builds profile text from `work_experience`, `education`, and `labeling_experience`. At least one of these must have data.
+
+### Score users for job
+
+| Property | Value |
+| -------- | ----- |
+| Name | `Score users for job` |
+| Use as | Action |
+| Data type | JSON |
+| Method | POST |
+| URL | `https://user-capsule-upsert-service.onrender.com/v1/match/score_users_for_job` |
+| Body type | JSON |
+
+**Body template:**
+```json
+{
+  "job_id": "<job_id>",
+  "candidate_user_ids": [<candidate_ids_json>],
+  "w_domain": <w_domain>,
+  "w_task": <w_task>,
+  "topK": <topK>,
+  "threshold": <threshold>
+}
+```
+
+**Body parameters:**
+| Key | Description | Allow blank |
+| --- | ----------- | ----------- |
+| `job_id` | The job's unique id | No |
+| `candidate_ids_json` | Comma-separated quoted user IDs: `"id1", "id2"` | No |
+| `w_domain` | Weight for domain similarity (0-1) | No |
+| `w_task` | Weight for task similarity (0-1) | No |
+| `topK` | Max results to return | No |
+| `threshold` | Min score to include (0-1) | Yes |
+
+> **Tip:** Set `w_domain` and `w_task` based on job type:
+> - **Specialized jobs** (require credentials/expertise): `w_domain=0.85, w_task=0.15`
+> - **Generic jobs** (labeling tasks): `w_domain=0.3, w_task=0.7`
+>
+> Or add `auto_weights: true` to let the API determine weights from job classification.
+
+**Response includes:**
+- `results[]`: Array of `{ user_id, s_domain, s_task, final, rank }`
+- `job_classification`: `{ job_class, required_credentials, subject_matter_codes }`
+- `w_domain`, `w_task`: Normalized weights used
+- `weights_source`: `"auto"` or `"request"`
+- `missing_vectors`: Users without embeddings
