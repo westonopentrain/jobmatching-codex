@@ -12,7 +12,7 @@ import { requireEnv } from '../utils/env';
 
 const requestSchema = z.object({
   user_id: z.string().min(1),
-  resume_text: z.string().min(1),
+  resume_text: z.string().optional(),
   work_experience: z.array(z.string()).optional(),
   education: z.array(z.string()).optional(),
   labeling_experience: z.array(z.string()).optional(),
@@ -45,11 +45,44 @@ function applyAliases(payload: unknown): unknown {
   return record;
 }
 
+function buildResumeText(body: RequestBody): string {
+  // Use resume_text if provided
+  if (body.resume_text && body.resume_text.trim().length > 0) {
+    return truncateResumeText(body.resume_text);
+  }
+
+  // Build from other available fields
+  const parts: string[] = [];
+
+  if (body.work_experience) {
+    const work = body.work_experience.filter((s) => s && s.trim().length > 0);
+    if (work.length > 0) {
+      parts.push('Work Experience: ' + work.join('; '));
+    }
+  }
+
+  if (body.education) {
+    const edu = body.education.filter((s) => s && s.trim().length > 0);
+    if (edu.length > 0) {
+      parts.push('Education: ' + edu.join('; '));
+    }
+  }
+
+  if (body.labeling_experience) {
+    const labeling = body.labeling_experience.filter((s) => s && s.trim().length > 0);
+    if (labeling.length > 0) {
+      parts.push('Labeling Experience: ' + labeling.join('; '));
+    }
+  }
+
+  return truncateResumeText(parts.join('\n\n'));
+}
+
 function normalizeRequest(body: RequestBody): NormalizedUserProfile {
   const country = sanitizeOptionalString(body.country);
   return {
     userId: body.user_id,
-    resumeText: truncateResumeText(body.resume_text),
+    resumeText: buildResumeText(body),
     workExperience: sanitizeStringArray(body.work_experience),
     education: sanitizeStringArray(body.education),
     labelingExperience: sanitizeStringArray(body.labeling_experience),
@@ -87,7 +120,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         throw new AppError({
           code: 'VALIDATION_ERROR',
           statusCode: 400,
-          message: 'resume_text must not be empty',
+          message: 'No profile data provided. Please include resume_text, work_experience, education, or labeling_experience.',
         });
       }
 
