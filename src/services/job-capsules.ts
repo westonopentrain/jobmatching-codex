@@ -195,25 +195,53 @@ CRITICAL: Do NOT invent expertise. "Take photos and upload them" = general popul
 
 ## TASK CAPSULE (WHAT work will they do?)
 
-Describe the annotation/labeling/review work in 1-2 sentences. Focus on work type and modality.
+This capsule matches against freelancer TASK EXPERIENCE. Output the TYPE of work, not step-by-step instructions.
+
+Ask yourself:
+1. What MODALITY? (text, image, audio, video, code, 3D)
+2. What WORK TYPE? (collection, annotation, evaluation, review, QA, transcription)
+3. What TECHNIQUE? (bounding box, segmentation, classification, NER, ranking, rating)
+4. What AI WORKFLOW? (SFT, RLHF, DPO, red-teaming) — if applicable
+
+Output format: "[Modality] [work type]. [Technique/workflow details]."
+
+CRITICAL: Do NOT describe procedural instructions. Output the TASK TYPE only.
 
 ## EXAMPLES WITH REASONING
 
 Job: "OBGYN doctors for medical AI training"
-Think: Specific profession required? YES → OBGYN doctor
+Domain Think: Specific profession? YES → OBGYN doctor
 Domain: "OBGYN physician. Obstetrics and gynecology medical expertise."
+Task Think: Modality=text, Work=evaluation/editing, AI workflow=SFT
+Task: "LLM response evaluation and SFT. Medical content review and editing."
 
 Job: "Take selfies and upload passport photos via NFC app"
-Think: Specific profession? NO. Specific language? NO. Technical skills? NO → General population
+Domain Think: Profession? NO. Language? NO. Skills? NO → General
 Domain: "General population. No specialized expertise required."
+Task Think: Modality=image, Work=collection
+Task: "Image data collection and metadata annotation."
 
 Job: "Swedish video transcription QA"
-Think: Specific profession? NO. Specific language? YES → Swedish
+Domain Think: Profession? NO. Language? YES → Swedish
 Domain: "Swedish native speaker."
+Task Think: Modality=video/audio, Work=QA, Technique=error classification
+Task: "Video transcription QA. Error classification and severity labeling."
 
 Job: "Senior Angular code reviewer"
-Think: Specific profession? NO. Specific language? NO. Technical skills? YES → Angular/JS
+Domain Think: Profession? NO. Language? NO. Skills? YES → Angular
 Domain: "Angular developer. JavaScript, TypeScript, frontend engineering."
+Task Think: Modality=code, Work=review/QA, AI workflow=evaluating AI-generated code
+Task: "Code review and QA. Evaluation of AI-generated code responses."
+
+Job: "Draw bounding boxes on street images"
+Domain: "General population. No specialized expertise required."
+Task Think: Modality=image, Work=annotation, Technique=bounding box
+Task: "Image annotation. Bounding box labeling."
+
+Job: "Compare AI chatbot responses and pick the better one"
+Domain: "General population. No specialized expertise required."
+Task Think: Modality=text, Work=evaluation, Technique=ranking, AI workflow=RLHF
+Task: "RLHF preference ranking. LLM response comparison and selection."
 
 ## OUTPUT FORMAT
 
@@ -225,8 +253,8 @@ Return JSON:
     "keywords": ["<5-10 relevant nouns, or 'none' if general population>"]
   },
   "task_capsule": {
-    "text": "<1-2 sentences: the data work>",
-    "keywords": ["<5-10 task/modality nouns>"]
+    "text": "<10-25 words: task type, NOT procedural instructions>",
+    "keywords": ["<5-10 task/modality/technique nouns>"]
   }
 }
 
