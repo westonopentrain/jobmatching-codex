@@ -6,7 +6,7 @@ import { CapsulePair, NormalizedJobPosting, UpsertJobRequest } from '../utils/ty
 import { createTextResponse } from './openai-responses';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
-  'You extract expertise types from job postings for vector-based freelancer matching. Be extremely concise. Output the profession/expertise type, not job requirements or logistics. Return strictly valid JSON only.';
+  'You create search queries for freelancer matching. Output what would appear in an ideal candidate\'s profile. Default to "General population" unless a specific profession, language, or technical skill is required. Return valid JSON only.';
 
 const CAPSULE_TEMPERATURE = 0.2;
 // Allow additional room for the model to satisfy the strict
@@ -15,7 +15,7 @@ const CAPSULE_TEMPERATURE = 0.2;
 // from OpenAI ("max_output_tokens").
 const CAPSULE_MAX_OUTPUT_TOKENS = 1600;
 
-const KEYWORD_MIN_COUNT = 10;
+const KEYWORD_MIN_COUNT = 5;
 
 const DOMAIN_DISALLOWED_TOKENS = [
   'posted',
@@ -171,46 +171,62 @@ const KEYWORD_STOPWORDS = new Set([
   'hours',
 ]);
 
-const JOB_CAPSULE_USER_MESSAGE = `We match freelancers to jobs using vector embeddings. You extract the EXPERTISE TYPE needed.
+const JOB_CAPSULE_USER_MESSAGE = `You create SEARCH QUERIES to find matching freelancers using vector similarity.
 
-DOMAIN CAPSULE: What type of expert should we match to this job?
-- Output ONLY the expertise/profession type (e.g., "OBGYN physician", "Swedish linguist", "Angular developer")
-- NEVER include: years of experience, age requirements, location, equipment needed, task instructions
-- If NO specialized expertise is needed (anyone can do it): output "General population. No specialized expertise required."
-- MAX 25 WORDS.
+The capsule you output will be embedded and compared against freelancer profile embeddings (their resumes, backgrounds, expertise).
+Your job: Output text that would be SEMANTICALLY SIMILAR to the LinkedIn/resume of an ideal candidate.
 
-TASK CAPSULE: What data work will they do?
-- Describe the annotation/labeling/review work type
-- MAX 40 WORDS.
+## DOMAIN CAPSULE (WHO should do this job?)
 
-EXAMPLES OF GOOD VS BAD DOMAIN CAPSULES:
+Ask yourself these questions IN ORDER. Stop at the first YES:
 
-Job: "OBGYN doctors needed for medical AI training"
-BAD: "MDs with completed residency and at least five years of clinical experience, strong English writing skills"
-GOOD: "OBGYN physician. Obstetrics and gynecology expertise."
+1. Does this job require a SPECIFIC PROFESSION (doctor, lawyer, engineer, accountant)?
+   → Output that profession and domain (e.g., "OBGYN physician. Obstetrics and gynecology.")
+
+2. Does this job require a SPECIFIC LANGUAGE for the work itself (translation, transcription, localization)?
+   → Output that language (e.g., "Swedish native speaker.")
+
+3. Does this job require SPECIFIC TECHNICAL SKILLS (coding, design, data analysis)?
+   → Output those skills (e.g., "Angular developer. JavaScript, TypeScript, frontend.")
+
+4. If NO to all above → Output: "General population. No specialized expertise required."
+
+CRITICAL: Do NOT invent expertise. "Take photos and upload them" = general population, NOT "photography expertise".
+
+## TASK CAPSULE (WHAT work will they do?)
+
+Describe the annotation/labeling/review work in 1-2 sentences. Focus on work type and modality.
+
+## EXAMPLES WITH REASONING
+
+Job: "OBGYN doctors for medical AI training"
+Think: Specific profession required? YES → OBGYN doctor
+Domain: "OBGYN physician. Obstetrics and gynecology medical expertise."
+
+Job: "Take selfies and upload passport photos via NFC app"
+Think: Specific profession? NO. Specific language? NO. Technical skills? NO → General population
+Domain: "General population. No specialized expertise required."
 
 Job: "Swedish video transcription QA"
-BAD: "Native Swedish speakers with 2-3 years in video annotation, based in Sweden, comfortable assessing quality"
-GOOD: "Swedish linguist. Native Swedish speaker with transcription experience."
-
-Job: "NFC photo collection - take selfies and upload"
-BAD: "Must be 18+, live in country with NFC passports, own NFC-capable smartphone, have historical photos"
-GOOD: "General population. No specialized expertise required."
+Think: Specific profession? NO. Specific language? YES → Swedish
+Domain: "Swedish native speaker."
 
 Job: "Senior Angular code reviewer"
-BAD: "Senior engineer with 7+ years professional experience, expert in Angular 15+, B2+ English"
-GOOD: "Senior Angular developer. JavaScript, TypeScript, RxJS, frontend engineering expertise."
+Think: Specific profession? NO. Specific language? NO. Technical skills? YES → Angular/JS
+Domain: "Angular developer. JavaScript, TypeScript, frontend engineering."
+
+## OUTPUT FORMAT
 
 Return JSON:
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<max 25 words: expertise type or 'General population. No specialized expertise required.'>",
-    "keywords": ["<10-16 domain nouns>"]
+    "text": "<5-20 words: profession/language/skill OR 'General population. No specialized expertise required.'>",
+    "keywords": ["<5-10 relevant nouns, or 'none' if general population>"]
   },
   "task_capsule": {
-    "text": "<max 40 words: the data work>",
-    "keywords": ["<10-16 task nouns>"]
+    "text": "<1-2 sentences: the data work>",
+    "keywords": ["<5-10 task/modality nouns>"]
   }
 }
 
