@@ -6,3 +6,5 @@ dist
 
 # Vitest cache
 .vitest
+
+/src/generated/prisma

@@ -9,6 +9,7 @@ import { generateCapsules } from '../services/capsules';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
 import { upsertVector } from '../services/pinecone';
 import { requireEnv } from '../utils/env';
+import { auditUserUpsert } from '../services/audit';
 
 const requestSchema = z.object({
   user_id: z.string().min(1),
@@ -194,6 +195,22 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'User capsule upsert completed'
       );
+
+      // Audit logging (non-blocking)
+      auditUserUpsert({
+        userId: normalized.userId,
+        requestId,
+        resumeChars: normalized.resumeText.length,
+        hasWorkExperience: (normalized.workExperience?.length ?? 0) > 0,
+        hasEducation: (normalized.education?.length ?? 0) > 0,
+        hasLabelingExperience: (normalized.labelingExperience?.length ?? 0) > 0,
+        country: normalized.country,
+        languages: normalized.languages,
+        domainCapsule: capsules.domain.text,
+        taskCapsule: capsules.task.text,
+        evidenceDetected: !capsules.task.text.includes('No AI/LLM data-labeling'),
+        elapsedMs: elapsedRounded,
+      });
 
       return reply.status(200).send({
         status: 'ok',

@@ -9,6 +9,8 @@ import { upsertVector } from '../services/pinecone';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
 import { classifyJobSync } from '../services/job-classifier';
+import { auditJobUpsert } from '../services/audit';
+import { checkJobUpsertAlerts } from '../services/alerts';
 
 const fieldSchema = z.object({
   Instructions: z.string().optional(),
@@ -143,6 +145,29 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
 
       const now = new Date().toISOString();
       const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Number(elapsedMs.toFixed(2));
+
+      // Audit logging (non-blocking)
+      auditJobUpsert({
+        jobId: normalized.jobId,
+        requestId,
+        title: normalized.title,
+        rawInput: normalized as unknown as Record<string, unknown>,
+        domainCapsule: capsules.domain.text,
+        domainKeywords: capsules.domain.keywords ?? [],
+        taskCapsule: capsules.task.text,
+        taskKeywords: capsules.task.keywords ?? [],
+        classification,
+        elapsedMs: elapsedRounded,
+      });
+
+      // Check for alerts (non-blocking)
+      checkJobUpsertAlerts({
+        jobId: normalized.jobId,
+        jobTitle: normalized.title,
+        jobClass: classification.jobClass,
+        classificationConfidence: classification.confidence,
+      });
 
       return reply.status(200).send({
         status: 'ok',
@@ -171,20 +196,20 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
           reasoning: classification.reasoning,
         },
         updated_at: now,
-        elapsed_ms: Number(elapsedMs.toFixed(2)),
+        elapsed_ms: elapsedRounded,
       });
     } catch (error) {
-      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-      const elapsedRounded = Number(elapsedMs.toFixed(2));
+      const errorElapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const errorElapsedRounded = Number(errorElapsedMs.toFixed(2));
       if (error instanceof AppError) {
         request.log.warn(
-          { error: error.message, code: error.code, details: error.details, event: 'jobs.upsert.error', elapsedMs: elapsedRounded },
+          { error: error.message, code: error.code, details: error.details, event: 'jobs.upsert.error', elapsedMs: errorElapsedRounded },
           'Handled job upsert error'
         );
         return reply.status(error.statusCode).send(toErrorResponse(error));
       }
 
-      request.log.error({ err: error, event: 'jobs.upsert.error', elapsedMs: elapsedRounded }, 'Unexpected error during job upsert');
+      request.log.error({ err: error, event: 'jobs.upsert.error', elapsedMs: errorElapsedRounded }, 'Unexpected error during job upsert');
       const appError = new AppError({
         code: 'JOB_UPSERT_FAILURE',
         statusCode: 500,
