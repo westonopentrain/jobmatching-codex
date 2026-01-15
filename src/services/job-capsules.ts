@@ -167,28 +167,28 @@ const JOB_CAPSULE_USER_MESSAGE = `Return JSON with this exact shape:
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<1–2 sentences, 40–80 words, language + subject-matter>",
-    "keywords": ["<10–16 distinct domain nouns including languages>"]
+    "text": "<1–2 concise sentences describing domain expertise needed>",
+    "keywords": ["<10–16 distinct domain nouns>"]
   },
   "task_capsule": {
-    "text": "<1 paragraph, 70–110 words, AI/LLM data work ONLY>",
+    "text": "<1 concise paragraph describing the AI/LLM data work>",
     "keywords": ["<10–16 distinct task/tool/label/modality/workflow nouns>"]
   }
 }
 
-RULES — DOMAIN (language + subject-matter)
-- START with required language proficiency if AvailableLanguages is specified (e.g., "Slovak language proficiency required." or "Native Spanish speaker needed."). This is the MOST IMPORTANT matchable attribute.
-- Then include subject-matter nouns: specialties, subdisciplines, procedures, credentials/licenses, formal training, typical settings.
+RULES — DOMAIN (expertise/knowledge a person needs)
+- Focus on the domain expertise required: subject-matter knowledge, specialties, subdisciplines, credentials/licenses, formal training, typical settings.
+- Include language proficiency when it's a job requirement (e.g., for translation, transcription, or localization jobs that specify AvailableLanguages).
 - If a broad domain is named (e.g., "civil engineering", "corporate law"), include 3-5 canonical subareas.
 - EXCLUDE: AI/LLM/data-work terms (annotation, labeling, NER, prompt, response, SFT, RLHF), logistics (posted, seeking, candidates, availability, schedule, budget, rate, pay, labels per file, total labels), generic meta ("accuracy", "clarity", "content", "dataset", "files"), company names.
-- Form: 1–2 sentences, 40–80 words. Be concise. Focus on matchable attributes.
-- Keywords: 10–16 distinct tokens including language names. No task words, no duplicates.
+- Be concise. Simple jobs need short capsules.
+- Keywords: 10–16 distinct domain tokens. No task words, no duplicates.
 
 RULES — TASK (AI/LLM data work ONLY)
 - Include ONLY AI/LLM data work explicitly present: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), tools/platforms (name only if in job text), workflows (SFT, RLHF, DPO), rubric/QA/consistency checks, prompt/response writing, benchmark/eval dataset creation.
-- Keep domain nouns minimal and only when directly tied to a task (e.g., "code annotation", "legal document classification", "Slovak transcription evaluation").
+- Keep domain nouns minimal and only when directly tied to a task (e.g., "code annotation", "legal document classification").
 - EXCLUDE: pay/schedule, file counts, "labels per file", company names. Avoid generic filler tokens like "text/dataset/files/labels" in keywords.
-- Form: one paragraph, 70–110 words. Be concise.
+- Be concise.
 - Keywords: 10–16 distinct task/tool/label/modality/workflow tokens from this paragraph. No logistics, no duplicates.
 
 OUTPUT CONSTRAINTS
