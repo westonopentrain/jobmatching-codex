@@ -32,8 +32,7 @@ const DOMAIN_DISALLOWED_TOKENS = [
   'budget',
   'rate',
   'pay',
-  'countries',
-  'language level',
+  // Note: 'countries' and 'language level' removed - language requirements are important for matching
   'labels per file',
   'total labels',
   'number of labelers',
@@ -86,8 +85,7 @@ const TASK_DISALLOWED_TOKENS = [
   'budget',
   'rate',
   'pay',
-  'countries',
-  'language level',
+  // Note: 'countries' and 'language level' removed - language context is relevant for task matching
   'labels per file',
   'total labels',
   'number of labelers',
@@ -169,33 +167,34 @@ const JOB_CAPSULE_USER_MESSAGE = `Return JSON with this exact shape:
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<1–2 sentences, 60–110 words, subject-matter ONLY>",
-    "keywords": ["<10–16 distinct domain nouns>"]
+    "text": "<1–2 sentences, 40–80 words, language + subject-matter>",
+    "keywords": ["<10–16 distinct domain nouns including languages>"]
   },
   "task_capsule": {
-    "text": "<1 paragraph, 90–140 words, AI/LLM data work ONLY>",
+    "text": "<1 paragraph, 70–110 words, AI/LLM data work ONLY>",
     "keywords": ["<10–16 distinct task/tool/label/modality/workflow nouns>"]
   }
 }
 
-RULES — DOMAIN (subject-matter ONLY)
-- Include ONLY subject-matter nouns actually present or canonically implied by the named domain: specialties, subdisciplines, procedures, instruments, standards/frameworks, credentials/licenses (MD, PE, CPA), formal training (residency/fellowship/board), typical settings (clinic, courtroom, plant, field, repo).
-- Canonical subareas rule: If the job names a broad domain (e.g., “civil engineering”, “frontend web”, “corporate law”, “accounting”, “data science”), you MAY include well-known subareas and routine procedures commonly and directly subsumed by that domain (e.g., structural analysis, geotechnical design; HTML/CSS/JavaScript/DOM; mergers & acquisitions; financial modeling; supervised learning). Do NOT include niche subtopics that are not standard for the named domain. Limit canonical additions to 5–10 high-signal nouns.
-- EXCLUDE: any AI/LLM/data-work terms (annotation, labeling, NER, OCR, bbox, polygon, transcription, prompt, response, SFT, RLHF, DPO, QA), logistics/HR (posted, seeking, candidates, availability, schedule, countries, language level, budget, rate, pay, labels per file, total labels, number of labelers), generic meta (“accuracy”, “clarity”, “empathy”, “audience”, “content”, “information”, “dataset”, “files”), and company names.
-- Form: 1–2 sentences, 60–110 words. Prefer concrete nouns over adjectives.
-- Keywords: 10–16 distinct domain tokens taken from this domain text. No logistics, no task words, no duplicates.
+RULES — DOMAIN (language + subject-matter)
+- START with required language proficiency if AvailableLanguages is specified (e.g., "Slovak language proficiency required." or "Native Spanish speaker needed."). This is the MOST IMPORTANT matchable attribute.
+- Then include subject-matter nouns: specialties, subdisciplines, procedures, credentials/licenses, formal training, typical settings.
+- If a broad domain is named (e.g., "civil engineering", "corporate law"), include 3-5 canonical subareas.
+- EXCLUDE: AI/LLM/data-work terms (annotation, labeling, NER, prompt, response, SFT, RLHF), logistics (posted, seeking, candidates, availability, schedule, budget, rate, pay, labels per file, total labels), generic meta ("accuracy", "clarity", "content", "dataset", "files"), company names.
+- Form: 1–2 sentences, 40–80 words. Be concise. Focus on matchable attributes.
+- Keywords: 10–16 distinct tokens including language names. No task words, no duplicates.
 
 RULES — TASK (AI/LLM data work ONLY)
 - Include ONLY AI/LLM data work explicitly present: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), tools/platforms (name only if in job text), workflows (SFT, RLHF, DPO), rubric/QA/consistency checks, prompt/response writing, benchmark/eval dataset creation.
-- Keep domain nouns minimal and only when directly tied to a task (e.g., “code annotation”, “legal document classification”, “medical content evaluation”). Do not restate the domain list here.
-- EXCLUDE: logistics/HR/marketing/pay/schedule/country/language-level, file counts, “labels per file”, company names. Avoid generic filler tokens like “text/dataset/files/labels” in keywords; prefer precise “text modality” if needed.
-- Form: one paragraph, 90–140 words. Do not repeat the same token more than once unless it is a standard acronym (e.g., SFT, RLHF).
+- Keep domain nouns minimal and only when directly tied to a task (e.g., "code annotation", "legal document classification", "Slovak transcription evaluation").
+- EXCLUDE: pay/schedule, file counts, "labels per file", company names. Avoid generic filler tokens like "text/dataset/files/labels" in keywords.
+- Form: one paragraph, 70–110 words. Be concise.
 - Keywords: 10–16 distinct task/tool/label/modality/workflow tokens from this paragraph. No logistics, no duplicates.
 
 OUTPUT CONSTRAINTS
 - Return strictly valid JSON (UTF-8, no trailing commas), exactly matching the schema above.
 - Do not include any extra fields.
-- Ensure every keyword appears verbatim in the corresponding capsule text. (For DOMAIN keywords, they do not need to appear in JOB_TEXT if they are canonical subareas of the named domain.)
+- Ensure every keyword appears verbatim in the corresponding capsule text.
 
 JOB_TITLE: {{JOB_TITLE}}
 JOB_TEXT:
