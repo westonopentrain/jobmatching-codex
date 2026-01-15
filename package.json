@@ -4,7 +4,7 @@
   "description": "User capsule upsert service",
   "type": "commonjs",
   "scripts": {
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",

@@ -8,7 +8,7 @@ services:
   - type: web
     name: user-capsule-upsert-service
     env: node
-    buildCommand: npm ci && npx prisma generate && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npx prisma migrate deploy && node dist/server.js
     healthCheckPath: /health
     envVars:
