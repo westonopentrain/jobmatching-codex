@@ -6,7 +6,7 @@ import { CapsulePair, NormalizedJobPosting, UpsertJobRequest } from '../utils/ty
 import { createTextResponse } from './openai-responses';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
-  'You produce two concise, high-precision capsules for vector search from a job posting.\nCapsules must be grammatical sentences only (no bullet lists, no angle brackets, no telegraph style).\nUse facts from the job text; do not invent named employers or tools not mentioned.\nPII-safe: no company names or personal names. Return strictly valid JSON; no extra commentary.';
+  'You extract expertise types from job postings for vector-based freelancer matching. Be extremely concise. Output the profession/expertise type, not job requirements or logistics. Return strictly valid JSON only.';
 
 const CAPSULE_TEMPERATURE = 0.2;
 // Allow additional room for the model to satisfy the strict
@@ -171,33 +171,46 @@ const KEYWORD_STOPWORDS = new Set([
   'hours',
 ]);
 
-const JOB_CAPSULE_USER_MESSAGE = `PURPOSE: We embed these capsules into vector space to match freelancers to jobs.
-Freelancers have their own capsules describing their expertise and background.
-We find good matches by comparing the job capsule embedding to freelancer capsule embeddings.
+const JOB_CAPSULE_USER_MESSAGE = `We match freelancers to jobs using vector embeddings. You extract the EXPERTISE TYPE needed.
 
-Your job: Create capsules that will attract freelancers with the RIGHT background for this job.
+DOMAIN CAPSULE: What type of expert should we match to this job?
+- Output ONLY the expertise/profession type (e.g., "OBGYN physician", "Swedish linguist", "Angular developer")
+- NEVER include: years of experience, age requirements, location, equipment needed, task instructions
+- If NO specialized expertise is needed (anyone can do it): output "General population. No specialized expertise required."
+- MAX 25 WORDS.
 
-DOMAIN CAPSULE — What expertise/background makes someone a good fit?
-- For specialized jobs (medical, legal, coding, engineering): list the required domain knowledge, credentials, or training
-- For language-specific jobs (translation, transcription): the target language is the primary requirement
-- For simple tasks anyone can do (data collection, photo uploads, surveys): say "General skills" or "No specialized expertise required"
-- CRITICAL: Don't invent expertise requirements that don't exist. If the job just needs someone to follow instructions, say so.
+TASK CAPSULE: What data work will they do?
+- Describe the annotation/labeling/review work type
+- MAX 40 WORDS.
 
-TASK CAPSULE — What AI/data work will they do?
-- Describe the actual work: labeling, evaluation, transcription, annotation, classification, rating, etc.
-- Include modalities: text, image, audio, video, code
-- Include workflows if relevant: SFT, RLHF, DPO, QA review
+EXAMPLES OF GOOD VS BAD DOMAIN CAPSULES:
 
-Return JSON with this exact shape:
+Job: "OBGYN doctors needed for medical AI training"
+BAD: "MDs with completed residency and at least five years of clinical experience, strong English writing skills"
+GOOD: "OBGYN physician. Obstetrics and gynecology expertise."
+
+Job: "Swedish video transcription QA"
+BAD: "Native Swedish speakers with 2-3 years in video annotation, based in Sweden, comfortable assessing quality"
+GOOD: "Swedish linguist. Native Swedish speaker with transcription experience."
+
+Job: "NFC photo collection - take selfies and upload"
+BAD: "Must be 18+, live in country with NFC passports, own NFC-capable smartphone, have historical photos"
+GOOD: "General population. No specialized expertise required."
+
+Job: "Senior Angular code reviewer"
+BAD: "Senior engineer with 7+ years professional experience, expert in Angular 15+, B2+ English"
+GOOD: "Senior Angular developer. JavaScript, TypeScript, RxJS, frontend engineering expertise."
+
+Return JSON:
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<1-2 sentences: expertise needed, or 'General skills' if none>",
+    "text": "<max 25 words: expertise type or 'General population. No specialized expertise required.'>",
     "keywords": ["<10-16 domain nouns>"]
   },
   "task_capsule": {
-    "text": "<1 paragraph: the data work to be done>",
-    "keywords": ["<10-16 task/modality/workflow nouns>"]
+    "text": "<max 40 words: the data work>",
+    "keywords": ["<10-16 task nouns>"]
   }
 }
 
