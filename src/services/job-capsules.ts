@@ -6,7 +6,7 @@ import { CapsulePair, NormalizedJobPosting, UpsertJobRequest } from '../utils/ty
 import { createTextResponse } from './openai-responses';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
-  'You produce two concise, high-precision capsules for vector search from a job posting.\nCapsules must be grammatical sentences only (no bullet lists, no angle brackets, no telegraph style).\nUse facts from the job text; do not invent named employers or tools not mentioned.\nPII-safe: no company names or personal names. Return strictly valid JSON; no extra commentary.';
+  'You create search queries for freelancer matching. Output what would appear in an ideal candidate\'s profile. Default to "General population" unless a specific profession, language, or technical skill is required. Return valid JSON only.';
 
 const CAPSULE_TEMPERATURE = 0.2;
 // Allow additional room for the model to satisfy the strict
@@ -15,7 +15,7 @@ const CAPSULE_TEMPERATURE = 0.2;
 // from OpenAI ("max_output_tokens").
 const CAPSULE_MAX_OUTPUT_TOKENS = 1600;
 
-const KEYWORD_MIN_COUNT = 10;
+const KEYWORD_MIN_COUNT = 5;
 
 const DOMAIN_DISALLOWED_TOKENS = [
   'posted',
@@ -171,33 +171,62 @@ const KEYWORD_STOPWORDS = new Set([
   'hours',
 ]);
 
-const JOB_CAPSULE_USER_MESSAGE = `PURPOSE: We embed these capsules into vector space to match freelancers to jobs.
-Freelancers have their own capsules describing their expertise and background.
-We find good matches by comparing the job capsule embedding to freelancer capsule embeddings.
+const JOB_CAPSULE_USER_MESSAGE = `You create SEARCH QUERIES to find matching freelancers using vector similarity.
 
-Your job: Create capsules that will attract freelancers with the RIGHT background for this job.
+The capsule you output will be embedded and compared against freelancer profile embeddings (their resumes, backgrounds, expertise).
+Your job: Output text that would be SEMANTICALLY SIMILAR to the LinkedIn/resume of an ideal candidate.
 
-DOMAIN CAPSULE — What expertise/background makes someone a good fit?
-- For specialized jobs (medical, legal, coding, engineering): list the required domain knowledge, credentials, or training
-- For language-specific jobs (translation, transcription): the target language is the primary requirement
-- For simple tasks anyone can do (data collection, photo uploads, surveys): say "General skills" or "No specialized expertise required"
-- CRITICAL: Don't invent expertise requirements that don't exist. If the job just needs someone to follow instructions, say so.
+## DOMAIN CAPSULE (WHO should do this job?)
 
-TASK CAPSULE — What AI/data work will they do?
-- Describe the actual work: labeling, evaluation, transcription, annotation, classification, rating, etc.
-- Include modalities: text, image, audio, video, code
-- Include workflows if relevant: SFT, RLHF, DPO, QA review
+Ask yourself these questions IN ORDER. Stop at the first YES:
 
-Return JSON with this exact shape:
+1. Does this job require a SPECIFIC PROFESSION (doctor, lawyer, engineer, accountant)?
+   → Output that profession and domain (e.g., "OBGYN physician. Obstetrics and gynecology.")
+
+2. Does this job require a SPECIFIC LANGUAGE for the work itself (translation, transcription, localization)?
+   → Output that language (e.g., "Swedish native speaker.")
+
+3. Does this job require SPECIFIC TECHNICAL SKILLS (coding, design, data analysis)?
+   → Output those skills (e.g., "Angular developer. JavaScript, TypeScript, frontend.")
+
+4. If NO to all above → Output: "General population. No specialized expertise required."
+
+CRITICAL: Do NOT invent expertise. "Take photos and upload them" = general population, NOT "photography expertise".
+
+## TASK CAPSULE (WHAT work will they do?)
+
+Describe the annotation/labeling/review work in 1-2 sentences. Focus on work type and modality.
+
+## EXAMPLES WITH REASONING
+
+Job: "OBGYN doctors for medical AI training"
+Think: Specific profession required? YES → OBGYN doctor
+Domain: "OBGYN physician. Obstetrics and gynecology medical expertise."
+
+Job: "Take selfies and upload passport photos via NFC app"
+Think: Specific profession? NO. Specific language? NO. Technical skills? NO → General population
+Domain: "General population. No specialized expertise required."
+
+Job: "Swedish video transcription QA"
+Think: Specific profession? NO. Specific language? YES → Swedish
+Domain: "Swedish native speaker."
+
+Job: "Senior Angular code reviewer"
+Think: Specific profession? NO. Specific language? NO. Technical skills? YES → Angular/JS
+Domain: "Angular developer. JavaScript, TypeScript, frontend engineering."
+
+## OUTPUT FORMAT
+
+Return JSON:
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<1-2 sentences: expertise needed, or 'General skills' if none>",
-    "keywords": ["<10-16 domain nouns>"]
+    "text": "<5-20 words: profession/language/skill OR 'General population. No specialized expertise required.'>",
+    "keywords": ["<5-10 relevant nouns, or 'none' if general population>"]
   },
   "task_capsule": {
-    "text": "<1 paragraph: the data work to be done>",
-    "keywords": ["<10-16 task/modality/workflow nouns>"]
+    "text": "<1-2 sentences: the data work>",
+    "keywords": ["<5-10 task/modality nouns>"]
   }
 }
 

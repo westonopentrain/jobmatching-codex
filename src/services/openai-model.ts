@@ -1,7 +1,7 @@
 import { getEnv } from '../utils/env';
 import { logger } from '../utils/logger';
 
-const DEFAULT_CAPSULE_MODEL = 'gpt-4o-mini';
+const DEFAULT_CAPSULE_MODEL = 'gpt-4o';
 let capsuleModelWarningLogged = false;
 
 export function resolveCapsuleModel(): string {
