@@ -171,39 +171,35 @@ const KEYWORD_STOPWORDS = new Set([
   'hours',
 ]);
 
-const JOB_CAPSULE_USER_MESSAGE = `Return JSON with this exact shape:
+const JOB_CAPSULE_USER_MESSAGE = `PURPOSE: We embed these capsules into vector space to match freelancers to jobs.
+Freelancers have their own capsules describing their expertise and background.
+We find good matches by comparing the job capsule embedding to freelancer capsule embeddings.
 
+Your job: Create capsules that will attract freelancers with the RIGHT background for this job.
+
+DOMAIN CAPSULE — What expertise/background makes someone a good fit?
+- For specialized jobs (medical, legal, coding, engineering): list the required domain knowledge, credentials, or training
+- For language-specific jobs (translation, transcription): the target language is the primary requirement
+- For simple tasks anyone can do (data collection, photo uploads, surveys): say "General skills" or "No specialized expertise required"
+- CRITICAL: Don't invent expertise requirements that don't exist. If the job just needs someone to follow instructions, say so.
+
+TASK CAPSULE — What AI/data work will they do?
+- Describe the actual work: labeling, evaluation, transcription, annotation, classification, rating, etc.
+- Include modalities: text, image, audio, video, code
+- Include workflows if relevant: SFT, RLHF, DPO, QA review
+
+Return JSON with this exact shape:
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<1–2 concise sentences describing domain expertise needed>",
-    "keywords": ["<10–16 distinct domain nouns>"]
+    "text": "<1-2 sentences: expertise needed, or 'General skills' if none>",
+    "keywords": ["<10-16 domain nouns>"]
   },
   "task_capsule": {
-    "text": "<1 concise paragraph describing the AI/LLM data work>",
-    "keywords": ["<10–16 distinct task/tool/label/modality/workflow nouns>"]
+    "text": "<1 paragraph: the data work to be done>",
+    "keywords": ["<10-16 task/modality/workflow nouns>"]
   }
 }
-
-RULES — DOMAIN (expertise/knowledge a person needs)
-- Focus on the domain expertise required: subject-matter knowledge, specialties, subdisciplines, credentials/licenses, formal training.
-- Include language proficiency when it's a job requirement (e.g., for translation, transcription, or localization jobs).
-- If a broad domain is named (e.g., "civil engineering", "corporate law"), include 3-5 canonical subareas.
-- EXCLUDE: AI/LLM/data-work terms, logistics (years of experience, candidates, availability, schedule, budget, rate, pay), generic filler ("accuracy", "clarity", "content", "accessibility"), company names.
-- Be extremely concise. Aim for 20-50 words. List expertise areas, don't write prose.
-- Keywords: 10–16 distinct domain tokens. No task words, no duplicates.
-
-RULES — TASK (AI/LLM data work ONLY)
-- Include ONLY AI/LLM data work: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), workflows (SFT, RLHF, DPO), rubric/QA checks.
-- Keep domain nouns minimal.
-- EXCLUDE: pay/schedule, file counts, generic filler ("accuracy", "clarity", "accessibility").
-- Be extremely concise. Describe the work, not the job posting.
-- Keywords: 10–16 distinct task/tool/label/modality/workflow tokens. No logistics, no duplicates.
-
-OUTPUT CONSTRAINTS
-- Return strictly valid JSON (UTF-8, no trailing commas), exactly matching the schema above.
-- Do not include any extra fields.
-- Ensure every keyword appears verbatim in the corresponding capsule text.
 
 JOB_TITLE: {{JOB_TITLE}}
 JOB_TEXT:
