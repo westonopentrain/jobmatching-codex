@@ -40,6 +40,97 @@
   - `capsule_task_vectorID` = Response's task.vector_id
   - `capsule_updated_at` = Current date/time
 
+### Save Applicant Score Row Workflow
+
+**Backend Workflow**: `save_applicant_score_row`
+- Endpoint name: `save_applicant_score_row`
+- Ignores privacy rules: Yes
+- Only when: user is not empty
+
+**Parameters:**
+| Key | Type | Description |
+| --- | ---- | ----------- |
+| `run` | JobScoreRun | Parent scoring run |
+| `job` | Job | The job being scored |
+| `user` | User | The user being scored |
+| `s_domain` | number | Domain similarity score |
+| `s_task` | number | Task similarity score |
+| `final` | number | Weighted final score |
+| `rank` | number | Position in results |
+| `threshold` | number | Score threshold (for above_threshold calculation) |
+
+**Step 1: Create a new ApplicantScore**
+- Only when: `Search for ApplicantScores:count is 0` (prevents duplicates)
+- Creates ApplicantScore with: `run`, `job`, `user`
+
+**Step 2: Make changes to ApplicantScore**
+- Thing to change: `Search for ApplicantScores:first item`
+- Updates:
+  - `s_domain` = s_domain
+  - `s_task` = s_task
+  - `final` = final
+  - `rank` = rank
+  - `above_threshold` = final is not empty and (final >= threshold)
+
+> **Note:** This is an upsert pattern - creates record if it doesn't exist, then updates scores. Called by `score_applicants_for_job` for each result from the scoring API response.
+
+---
+
+### Score Applicants for Job Workflow
+
+**Backend Workflow**: `score_applicants_for_job`
+- Endpoint name: `score_applicants_for_job`
+- Ignores privacy rules: Yes
+
+**Parameters:**
+| Key | Type | List | Description |
+| --- | ---- | ---- | ----------- |
+| `job` | Job | No | The job to score candidates against |
+| `w_domain` | number | No | Domain weight (0-1) |
+| `w_task` | number | No | Task weight (0-1) |
+| `threshold` | number | No | Minimum score threshold |
+| `users` | User | Yes | List of users to score |
+
+**Step 1: Create a new JobScoreRun**
+- Type: JobScoreRun
+- `job` = job
+- `w_domain` = w_domain
+- `w_task` = w_task
+- `threshold_used` = threshold
+- `requested_at` = Current date/time
+
+**Step 2: Render - Job Matching - Score users for job**
+- API Connector: `Score users for job`
+- `job_id` = job's unique id
+- `w_domain` = w_domain
+- `w_task` = w_task
+- `topK` = users:count
+- `threshold` = threshold
+- `candidate_ids_json` = users:each item's unique id (formatted as comma-separated quoted strings)
+
+**Step 3: Make changes to JobScoreRun**
+- Thing to change: Result of step 1
+- `results_count` = Result of step 2's results:count
+- `elapsed_ms` = Result of step 2's elapsed_ms
+
+**Step 4: Schedule API Workflow save_applicant_score_row on a list**
+- Type of things: Score users for job result
+- List to run on: Result of step 2's results
+- API Workflow: `save_applicant_score_row`
+- Parameters for each result:
+  - `run` = Result of step 1
+  - `job` = job
+  - `user` = Search for Users:first item (where unique id = This result's user_id)
+  - `s_domain` = This result's s_domain
+  - `s_task` = This result's s_task
+  - `final` = This result's final
+  - `rank` = This result's rank
+  - `threshold` = threshold
+
+> **Note:** This workflow orchestrates the full scoring process: creates a parent JobScoreRun, calls the Render API, and creates ApplicantScore records for each result.
+
+---
+
 ### User Upsert Workflow
 
 **Backend Workflow**: `upsert-capsules-user`
