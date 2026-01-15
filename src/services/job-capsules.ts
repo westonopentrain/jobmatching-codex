@@ -33,6 +33,10 @@ const DOMAIN_DISALLOWED_TOKENS = [
   'rate',
   'pay',
   // Note: 'countries' and 'language level' removed - language requirements are important for matching
+  // Experience duration is logistics, not domain expertise
+  'years of experience',
+  'clinical experience',
+  'years experience',
   'labels per file',
   'total labels',
   'number of labelers',
@@ -41,6 +45,7 @@ const DOMAIN_DISALLOWED_TOKENS = [
   'accuracy',
   'clarity',
   'empathy',
+  'accessibility',
   'content',
   'information',
   'dataset',
@@ -86,6 +91,10 @@ const TASK_DISALLOWED_TOKENS = [
   'rate',
   'pay',
   // Note: 'countries' and 'language level' removed - language context is relevant for task matching
+  // Generic filler words
+  'accuracy',
+  'clarity',
+  'accessibility',
   'labels per file',
   'total labels',
   'number of labelers',
@@ -177,19 +186,19 @@ const JOB_CAPSULE_USER_MESSAGE = `Return JSON with this exact shape:
 }
 
 RULES — DOMAIN (expertise/knowledge a person needs)
-- Focus on the domain expertise required: subject-matter knowledge, specialties, subdisciplines, credentials/licenses, formal training, typical settings.
-- Include language proficiency when it's a job requirement (e.g., for translation, transcription, or localization jobs that specify AvailableLanguages).
+- Focus on the domain expertise required: subject-matter knowledge, specialties, subdisciplines, credentials/licenses, formal training.
+- Include language proficiency when it's a job requirement (e.g., for translation, transcription, or localization jobs).
 - If a broad domain is named (e.g., "civil engineering", "corporate law"), include 3-5 canonical subareas.
-- EXCLUDE: AI/LLM/data-work terms (annotation, labeling, NER, prompt, response, SFT, RLHF), logistics (posted, seeking, candidates, availability, schedule, budget, rate, pay, labels per file, total labels), generic meta ("accuracy", "clarity", "content", "dataset", "files"), company names.
-- Be concise. Simple jobs need short capsules.
+- EXCLUDE: AI/LLM/data-work terms, logistics (years of experience, candidates, availability, schedule, budget, rate, pay), generic filler ("accuracy", "clarity", "content", "accessibility"), company names.
+- Be extremely concise. Aim for 20-50 words. List expertise areas, don't write prose.
 - Keywords: 10–16 distinct domain tokens. No task words, no duplicates.
 
 RULES — TASK (AI/LLM data work ONLY)
-- Include ONLY AI/LLM data work explicitly present: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), tools/platforms (name only if in job text), workflows (SFT, RLHF, DPO), rubric/QA/consistency checks, prompt/response writing, benchmark/eval dataset creation.
-- Keep domain nouns minimal and only when directly tied to a task (e.g., "code annotation", "legal document classification").
-- EXCLUDE: pay/schedule, file counts, "labels per file", company names. Avoid generic filler tokens like "text/dataset/files/labels" in keywords.
-- Be concise.
-- Keywords: 10–16 distinct task/tool/label/modality/workflow tokens from this paragraph. No logistics, no duplicates.
+- Include ONLY AI/LLM data work: label types (evaluation, rating, classification, NER, OCR, transcription), modalities (text, image, audio, video, code), workflows (SFT, RLHF, DPO), rubric/QA checks.
+- Keep domain nouns minimal.
+- EXCLUDE: pay/schedule, file counts, generic filler ("accuracy", "clarity", "accessibility").
+- Be extremely concise. Describe the work, not the job posting.
+- Keywords: 10–16 distinct task/tool/label/modality/workflow tokens. No logistics, no duplicates.
 
 OUTPUT CONSTRAINTS
 - Return strictly valid JSON (UTF-8, no trailing commas), exactly matching the schema above.
