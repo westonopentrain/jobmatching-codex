@@ -33,21 +33,7 @@ export function getDb(): PrismaClient | null {
     connectionAttempted = true;
 
     try {
-      prismaClient = new PrismaClient({
-        log: [
-          { emit: 'event', level: 'error' },
-          { emit: 'event', level: 'warn' },
-        ],
-      });
-
-      // Log Prisma errors
-      prismaClient.$on('error' as never, (e: unknown) => {
-        logger.error({ event: 'db.error', error: e }, 'Prisma error');
-      });
-
-      prismaClient.$on('warn' as never, (e: unknown) => {
-        logger.warn({ event: 'db.warn', warning: e }, 'Prisma warning');
-      });
+      prismaClient = new PrismaClient();
 
       logger.info({ event: 'db.init' }, 'Database client initialized');
     } catch (error) {
