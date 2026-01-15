@@ -33,15 +33,14 @@ export function getDb(): PrismaClient | null {
     connectionAttempted = true;
 
     try {
-      prismaClient = new PrismaClient({
-        datasources: {
-          db: {
-            url: databaseUrl,
-          },
-        },
-      });
+      logger.info(
+        { event: 'db.init.attempt', url: databaseUrl.replace(/:[^:@]+@/, ':***@') },
+        'Attempting to initialize database client'
+      );
 
-      logger.info({ event: 'db.init', url: databaseUrl.replace(/:[^:@]+@/, ':***@') }, 'Database client initialized');
+      prismaClient = new PrismaClient();
+
+      logger.info({ event: 'db.init' }, 'Database client initialized');
     } catch (error) {
       logger.error({ event: 'db.init.error', error }, 'Failed to initialize database client');
       connectionFailed = true;
