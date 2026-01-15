@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Matching Admin Dashboard</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <!-- Login Screen -->
+  <div id="login-screen" class="screen">
+    <div class="login-container">
+      <h1>Job Matching Admin</h1>
+      <p>Enter your API key to access the dashboard</p>
+      <input type="password" id="api-key-input" placeholder="SERVICE_API_KEY">
+      <button id="login-btn">Login</button>
+      <p id="login-error" class="error"></p>
+    </div>
+  </div>
+
+  <!-- Dashboard Screen -->
+  <div id="dashboard-screen" class="screen hidden">
+    <header>
+      <h1>Job Matching Admin Dashboard</h1>
+      <button id="logout-btn">Logout</button>
+    </header>
+
+    <!-- Stats Bar -->
+    <div id="stats-bar" class="stats-bar">
+      <div class="stat">
+        <span class="stat-value" id="stat-jobs">-</span>
+        <span class="stat-label">Jobs</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-users">-</span>
+        <span class="stat-label">Users</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-matches">-</span>
+        <span class="stat-label">Match Requests</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-jobs-24h">-</span>
+        <span class="stat-label">Jobs (24h)</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-users-24h">-</span>
+        <span class="stat-label">Users (24h)</span>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="jobs">Jobs</button>
+      <button class="tab" data-tab="users">Users</button>
+      <button class="tab" data-tab="matches">Matches</button>
+    </nav>
+
+    <!-- Tab Content -->
+    <main class="tab-content">
+      <!-- Jobs Tab -->
+      <div id="jobs-tab" class="tab-pane active">
+        <div class="toolbar">
+          <input type="text" id="job-search" placeholder="Search by Job ID...">
+          <button id="job-search-btn">Search</button>
+          <button id="job-clear-btn">Clear</button>
+        </div>
+        <table id="jobs-table">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Job ID</th>
+              <th>Class</th>
+              <th>Confidence</th>
+              <th>Expertise</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="loading" id="jobs-loading">Loading...</div>
+      </div>
+
+      <!-- Users Tab -->
+      <div id="users-tab" class="tab-pane hidden">
+        <div class="toolbar">
+          <input type="text" id="user-search" placeholder="Search by User ID...">
+          <button id="user-search-btn">Search</button>
+          <button id="user-clear-btn">Clear</button>
+        </div>
+        <table id="users-table">
+          <thead>
+            <tr>
+              <th>User ID</th>
+              <th>Country</th>
+              <th>Languages</th>
+              <th>Evidence</th>
+              <th>Resume</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="loading" id="users-loading">Loading...</div>
+      </div>
+
+      <!-- Matches Tab -->
+      <div id="matches-tab" class="tab-pane hidden">
+        <div class="toolbar">
+          <input type="text" id="match-search" placeholder="Search by Job ID...">
+          <button id="match-search-btn">Search</button>
+          <button id="match-clear-btn">Clear</button>
+        </div>
+        <table id="matches-table">
+          <thead>
+            <tr>
+              <th>Job ID</th>
+              <th>Candidates</th>
+              <th>Results</th>
+              <th>Weights</th>
+              <th>Threshold</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="loading" id="matches-loading">Loading...</div>
+      </div>
+    </main>
+
+    <!-- Detail Modal -->
+    <div id="detail-modal" class="modal hidden">
+      <div class="modal-content">
+        <button class="modal-close">&times;</button>
+        <div id="modal-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

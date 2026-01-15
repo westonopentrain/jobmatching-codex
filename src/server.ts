@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import fastifyStatic from '@fastify/static';
+import path from 'path';
 import { healthRoutes } from './api/health';
 import { userRoutes } from './api/users';
 import { jobRoutes } from './api/jobs';
@@ -10,6 +12,17 @@ import { getEnv, getEnvNumber, requireEnv } from './utils/env';
 export function buildServer() {
   const app = Fastify({
     logger: loggerOptions,
+  });
+
+  // Serve static files from public directory
+  app.register(fastifyStatic, {
+    root: path.join(__dirname, '..', 'public'),
+    prefix: '/static/',
+  });
+
+  // Dashboard route - serve the admin UI
+  app.get('/dashboard', async (request, reply) => {
+    return reply.sendFile('index.html');
   });
 
   app.register(healthRoutes);
