@@ -1,0 +1,138 @@
+// Prisma schema for job matching audit system
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Job upsert audit trail
+model AuditJobUpsert {
+  id        Int      @id @default(autoincrement())
+  jobId     String   @map("job_id")
+  requestId String?  @map("request_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Input
+  title    String?
+  rawInput Json?    @map("raw_input")
+
+  // Capsules
+  domainCapsule  String?  @map("domain_capsule")
+  domainKeywords String[] @map("domain_keywords")
+  taskCapsule    String?  @map("task_capsule")
+  taskKeywords   String[] @map("task_keywords")
+
+  // Classification
+  jobClass                 String?  @map("job_class")
+  classificationConfidence Float?   @map("classification_confidence")
+  credentials              String[] @map("credentials")
+  subjectMatterCodes       String[] @map("subject_matter_codes")
+  expertiseTier            String?  @map("expertise_tier")
+  classificationReasoning  String?  @map("classification_reasoning")
+
+  // Metrics
+  elapsedMs Int? @map("elapsed_ms")
+
+  @@map("audit_job_upserts")
+  @@index([jobId])
+  @@index([createdAt])
+}
+
+// User upsert audit trail
+model AuditUserUpsert {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")
+  requestId String?  @map("request_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Input summary
+  resumeChars          Int?     @map("resume_chars")
+  hasWorkExperience    Boolean? @map("has_work_experience")
+  hasEducation         Boolean? @map("has_education")
+  hasLabelingExperience Boolean? @map("has_labeling_experience")
+  country              String?
+  languages            String[]
+
+  // Capsules
+  domainCapsule        String?  @map("domain_capsule")
+  taskCapsule          String?  @map("task_capsule")
+  evidenceDetected     Boolean? @map("evidence_detected")
+  validationViolations String[] @map("validation_violations")
+
+  // Metrics
+  elapsedMs Int? @map("elapsed_ms")
+
+  @@map("audit_user_upserts")
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// Match request audit
+model AuditMatchRequest {
+  id        Int      @id @default(autoincrement())
+  jobId     String   @map("job_id")
+  requestId String?  @map("request_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Request params
+  candidateCount Int?    @map("candidate_count")
+  wDomain        Float?  @map("w_domain")
+  wTask          Float?  @map("w_task")
+  weightsSource  String? @map("weights_source")
+  thresholdUsed  Float?  @map("threshold_used")
+  topKUsed       Int?    @map("top_k_used")
+
+  // Results summary
+  resultsReturned      Int? @map("results_returned")
+  countGteThreshold    Int? @map("count_gte_threshold")
+  missingDomainVectors Int? @map("missing_domain_vectors")
+  missingTaskVectors   Int? @map("missing_task_vectors")
+
+  // Metrics
+  elapsedMs Int? @map("elapsed_ms")
+
+  // Relations
+  results AuditMatchResult[]
+
+  @@map("audit_match_requests")
+  @@index([jobId])
+  @@index([createdAt])
+}
+
+// Individual match scores
+model AuditMatchResult {
+  id             Int    @id @default(autoincrement())
+  matchRequestId Int    @map("match_request_id")
+  userId         String @map("user_id")
+
+  sDomain    Float? @map("s_domain")
+  sTask      Float? @map("s_task")
+  finalScore Float? @map("final_score")
+  rank       Int?
+
+  // Relations
+  matchRequest AuditMatchRequest @relation(fields: [matchRequestId], references: [id], onDelete: Cascade)
+
+  @@map("audit_match_results")
+  @@index([matchRequestId])
+  @@index([userId])
+}
+
+// Ground truth for evaluation (future)
+model EvaluationGroundTruth {
+  id        Int      @id @default(autoincrement())
+  jobId     String   @map("job_id")
+  userId    String   @map("user_id")
+  outcome   String   // 'hired', 'rejected', 'not_a_fit'
+  createdAt DateTime @default(now()) @map("created_at")
+  source    String?  // 'bubble_sync', 'manual'
+
+  @@map("evaluation_ground_truth")
+  @@unique([jobId, userId])
+  @@index([jobId])
+  @@index([userId])
+}

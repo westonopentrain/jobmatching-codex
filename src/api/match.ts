@@ -7,6 +7,8 @@ import { ensureAuthorized } from '../utils/auth';
 import { EMBEDDING_DIMENSION } from '../services/embeddings';
 import { fetchVectors, queryByVector, QueryMatch } from '../services/pinecone';
 import { getWeightProfile, JobClass } from '../services/job-classifier';
+import { auditMatchRequest } from '../services/audit';
+import { checkMatchAlerts } from '../services/alerts';
 
 const SCORE_FORMULA = 'two-channel-linear-v1';
 const MAX_CANDIDATES = 50_000;
@@ -380,6 +382,44 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'Computed job applicant scores'
       );
+
+      // Audit logging (non-blocking)
+      auditMatchRequest({
+        jobId: job_id,
+        requestId,
+        candidateCount: candidate_user_ids.length,
+        wDomain: roundScore(weights.domain),
+        wTask: roundScore(weights.task),
+        weightsSource,
+        thresholdUsed: threshold,
+        topKUsed: topK,
+        resultsReturned: merged.results.length,
+        countGteThreshold: merged.countGteThreshold,
+        missingDomainVectors: merged.missingDomain.length,
+        missingTaskVectors: merged.missingTask.length,
+        elapsedMs: elapsedRounded,
+        results: merged.results.map((r) => ({
+          userId: r.user_id,
+          sDomain: r.s_domain,
+          sTask: r.s_task,
+          finalScore: r.final,
+          rank: r.rank,
+        })),
+      });
+
+      // Check for alerts (non-blocking)
+      checkMatchAlerts({
+        jobId: job_id,
+        jobClass,
+        candidateCount: candidate_user_ids.length,
+        resultsCount: merged.results.length,
+        countAboveThreshold: merged.countGteThreshold,
+        threshold,
+        missingDomainVectors: merged.missingDomain.length,
+        missingTaskVectors: merged.missingTask.length,
+        wDomain: roundScore(weights.domain),
+        wTask: roundScore(weights.task),
+      });
 
       const responseBody: Record<string, unknown> = {
         status: 'ok',

@@ -13,28 +13,32 @@
     "test:watch": "vitest",
     "index:create": "ts-node scripts/create-index.ts",
     "sync:main": "bash scripts/sync-main.sh"
-
   },
-  "keywords": ["openai", "pinecone", "fastify"],
+  "keywords": [
+    "openai",
+    "pinecone",
+    "fastify"
+  ],
   "author": "",
   "license": "MIT",
   "engines": {
     "node": ">=20.18.0",
     "npm": ">=10.0.0"
   },
-
   "dependencies": {
     "@pinecone-database/pinecone": "^6.1.2",
+    "@prisma/client": "^7.2.0",
     "dotenv": "^17.2.2",
     "fastify": "^5.6.1",
     "openai": "^5.23.0",
     "pino": "^9.11.0",
+    "prisma": "^7.2.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
-    "tsconfig-paths": "^4.2.0",
     "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
