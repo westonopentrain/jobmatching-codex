@@ -3,12 +3,17 @@
  *
  * Uses lazy initialization to avoid connection errors when DATABASE_URL is not set
  * (e.g., in local development without a database).
+ *
+ * Prisma 7 requires using an adapter for direct database connections.
  */
 
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 import { logger } from '../utils/logger';
 
 let prismaClient: PrismaClient | null = null;
+let pool: Pool | null = null;
 let connectionAttempted = false;
 let connectionFailed = false;
 
@@ -38,7 +43,14 @@ export function getDb(): PrismaClient | null {
         'Attempting to initialize database client'
       );
 
-      prismaClient = new PrismaClient();
+      // Create pg Pool
+      pool = new Pool({ connectionString: databaseUrl });
+
+      // Create Prisma adapter
+      const adapter = new PrismaPg(pool);
+
+      // Create PrismaClient with adapter
+      prismaClient = new PrismaClient({ adapter });
 
       logger.info({ event: 'db.init' }, 'Database client initialized');
     } catch (error) {
@@ -67,5 +79,9 @@ export async function disconnectDb(): Promise<void> {
     prismaClient = null;
     connectionAttempted = false;
     logger.info({ event: 'db.disconnect' }, 'Database client disconnected');
+  }
+  if (pool) {
+    await pool.end();
+    pool = null;
   }
 }
