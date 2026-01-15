@@ -3,6 +3,7 @@ import { healthRoutes } from './api/health';
 import { userRoutes } from './api/users';
 import { jobRoutes } from './api/jobs';
 import { matchRoutes } from './api/match';
+import { adminRoutes } from './api/admin';
 import { loggerOptions } from './utils/logger';
 import { getEnv, getEnvNumber, requireEnv } from './utils/env';
 
@@ -15,6 +16,7 @@ export function buildServer() {
   app.register(userRoutes);
   app.register(jobRoutes);
   app.register(matchRoutes);
+  app.register(adminRoutes);
 
   return app;
 }
