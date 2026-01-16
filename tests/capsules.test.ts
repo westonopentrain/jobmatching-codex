@@ -56,7 +56,7 @@ describe('validateTaskCapsule', () => {
 });
 
 describe('capsule prompt', () => {
-  it('includes strict rules and evidence list for downstream generation', () => {
+  it('includes decision tree rules and evidence list for downstream generation', () => {
     const profile = createProfile({
       resumeText: 'Frontend engineer working with React and TypeScript.',
       workExperience: ['Built UI components for logistics dashboards.'],
@@ -74,12 +74,12 @@ describe('capsule prompt', () => {
     const evidence = extractLabelingEvidence(evidenceSource);
     const prompt = buildCapsulePrompt(profile, evidence);
 
-    expect(prompt).toContain('GLOBAL RULES');
-    expect(prompt).toContain('Profile Domain Capsule (subject-matter ONLY; 90-140 words)');
-    expect(prompt).toContain('Profile Task Capsule (AI/LLM data work ONLY; evidence-only; 0 or 120-200 words)');
-    expect(prompt).toContain("EVIDENCE (use ONLY these for the Task Capsule when non-empty; if empty, use the fixed line above):");
+    expect(prompt).toContain('CRITICAL CONTEXT');
+    expect(prompt).toContain('DOMAIN CAPSULE (WHO is this person? 5-20 words)');
+    expect(prompt).toContain('TASK CAPSULE (WHAT AI/data work experience? 10-25 words)');
+    expect(prompt).toContain('EVIDENCE (for Task Capsule only; if empty, use the fixed \'no experience\' line):');
     expect(prompt).toContain('prompt writing');
-    expect(prompt).toContain('No AI/LLM data-labeling, model training, or evaluation experience was provided in the source.');
+    expect(prompt).toContain('No AI/LLM data-labeling, model training, or evaluation experience documented.');
   });
 });
 
