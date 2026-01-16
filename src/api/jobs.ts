@@ -9,7 +9,7 @@ import { upsertVector, deleteVectors } from '../services/pinecone';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
-import { classifyJobSync } from '../services/job-classifier';
+import { classifyJob } from '../services/job-classifier';
 import { auditJobUpsert } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
 
@@ -87,7 +87,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       );
 
       // Classify job to determine specialized vs generic and extract requirements
-      const classification = classifyJobSync(normalized);
+      const classification = await classifyJob(normalized);
       log.info(
         {
           event: 'job.classified',
