@@ -4,6 +4,7 @@
 
 // State
 let apiKey = localStorage.getItem('apiKey') || '';
+let currentMatchContext = null; // Stores { matchRequest, jobInfo, results, currentIndex }
 
 // DOM Elements
 const loginScreen = document.getElementById('login-screen');
@@ -34,6 +35,18 @@ function init() {
   modalClose.addEventListener('click', closeModal);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeModal();
+  });
+
+  // Keyboard navigation for candidate detail view
+  document.addEventListener('keydown', (e) => {
+    if (!currentMatchContext) return;
+    if (e.key === 'ArrowLeft') {
+      navigateCandidate(-1);
+    } else if (e.key === 'ArrowRight') {
+      navigateCandidate(1);
+    } else if (e.key === 'Escape') {
+      backToMatchList();
+    }
   });
 
   // Tab switching
@@ -724,7 +737,7 @@ async function showMatchDetail(matchId) {
         const expertise = user?.expertiseTier || 'entry';
 
         html += `
-          <tr class="clickable-row ${scoreClass}" onclick="showUserDetail('${escapeHtml(r.userId)}')">
+          <tr class="clickable-row ${scoreClass}" data-candidate-index="${idx}">
             <td><strong>#${r.rank || idx + 1}</strong></td>
             <td><strong>${finalPct}%</strong></td>
             <td>${domainPct}%</td>
@@ -747,10 +760,203 @@ async function showMatchDetail(matchId) {
     html += '</tbody></table></div>';
 
     modalBody.innerHTML = html;
+
+    // Store context for candidate navigation
+    currentMatchContext = {
+      matchRequest: m,
+      jobInfo: job,
+      results: m.results || [],
+      currentIndex: -1
+    };
+
+    // Add click handlers for candidate rows
+    modalBody.querySelectorAll('[data-candidate-index]').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = parseInt(row.dataset.candidateIndex, 10);
+        showCandidateDetail(idx);
+      });
+    });
   } catch (err) {
     modalBody.innerHTML = '<p class="error">Error loading match details</p>';
     console.error('Failed to load match detail:', err);
   }
+}
+
+// Candidate Detail View (with navigation)
+async function showCandidateDetail(index) {
+  if (!currentMatchContext || !currentMatchContext.results[index]) return;
+
+  currentMatchContext.currentIndex = index;
+  const result = currentMatchContext.results[index];
+  const job = currentMatchContext.jobInfo;
+  const total = currentMatchContext.results.length;
+
+  // Fetch full user details
+  let userData = null;
+  try {
+    const data = await apiFetch(`/admin/users/${encodeURIComponent(result.userId)}`);
+    userData = data.upserts?.[0] || null;
+  } catch (err) {
+    console.error('Failed to fetch user details:', err);
+  }
+
+  const raw = userData?.rawInput || {};
+  const finalPct = result.finalScore ? (result.finalScore * 100).toFixed(1) : '-';
+  const domainPct = result.sDomain ? (result.sDomain * 100).toFixed(1) : '-';
+  const taskPct = result.sTask ? (result.sTask * 100).toFixed(1) : '-';
+
+  let html = `
+    <div class="candidate-nav">
+      <button class="nav-btn" onclick="navigateCandidate(-1)" ${index === 0 ? 'disabled' : ''}>← Previous</button>
+      <span class="nav-info">
+        <strong>Candidate ${index + 1} of ${total}</strong>
+        ${job?.title ? ` for "${escapeHtml(truncate(job.title, 40))}"` : ''}
+      </span>
+      <button class="nav-btn" onclick="navigateCandidate(1)" ${index >= total - 1 ? 'disabled' : ''}>Next →</button>
+    </div>
+    <div class="candidate-nav-hint">Use ← → arrow keys to navigate, Esc to go back</div>
+
+    <div class="detail-section scores-section">
+      <div class="score-boxes">
+        <div class="score-box ${getScoreClass(result.finalScore)}">
+          <div class="score-label">Final Score</div>
+          <div class="score-value">${finalPct}%</div>
+        </div>
+        <div class="score-box">
+          <div class="score-label">Domain</div>
+          <div class="score-value">${domainPct}%</div>
+        </div>
+        <div class="score-box">
+          <div class="score-label">Task</div>
+          <div class="score-value">${taskPct}%</div>
+        </div>
+        <div class="score-box rank-box">
+          <div class="score-label">Rank</div>
+          <div class="score-value">#${result.rank || index + 1}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Capsules</h3>
+      <div class="capsule-comparison">
+        <div class="capsule-item">
+          <div class="capsule-label">User Domain</div>
+          <div class="capsule-text">${escapeHtml(userData?.domainCapsule || result.userInfo?.domainCapsule || '-')}</div>
+        </div>
+        <div class="capsule-item">
+          <div class="capsule-label">User Task</div>
+          <div class="capsule-text">${escapeHtml(userData?.taskCapsule || '-')}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Profile</h3>
+      <div class="detail-grid">
+        <div class="detail-item">
+          <span class="label">User ID</span>
+          <span class="value"><code style="font-size:11px;">${escapeHtml(result.userId)}</code></span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Country</span>
+          <span class="value">${escapeHtml(userData?.country || raw.country || '-')}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Languages</span>
+          <span class="value">${userData?.languages?.join(', ') || (Array.isArray(raw.languages) ? raw.languages.join(', ') : raw.languages) || '-'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Expertise</span>
+          <span class="value"><span class="badge badge-${userData?.expertiseTier || 'entry'}">${userData?.expertiseTier || 'entry'}</span></span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Credentials</span>
+          <span class="value">${userData?.credentials?.length ? userData.credentials.join(', ') : 'None'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Years Experience</span>
+          <span class="value">${userData?.yearsExperience ?? '-'}</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Resume and work history (expanded by default)
+  html += `
+    <div class="detail-section">
+      <h3>Resume & Work History</h3>
+      ${raw.resume_text ? `
+        <div style="margin-bottom:16px;">
+          <strong>Resume Text:</strong>
+          <div class="capsule-text resume-text" style="margin-top:4px;max-height:300px;overflow-y:auto;white-space:pre-wrap;">${escapeHtml(raw.resume_text)}</div>
+        </div>
+      ` : '<p style="color:#666;">No resume text available</p>'}
+
+      ${raw.work_experience && raw.work_experience.length > 0 ? `
+        <div style="margin-bottom:16px;">
+          <strong>Work Experience:</strong>
+          <ul style="margin:4px 0 0 20px;">
+            ${raw.work_experience.map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+
+      ${raw.education && raw.education.length > 0 ? `
+        <div style="margin-bottom:16px;">
+          <strong>Education:</strong>
+          <ul style="margin:4px 0 0 20px;">
+            ${raw.education.map(e => `<li>${escapeHtml(e)}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+
+      ${raw.labeling_experience && raw.labeling_experience.length > 0 ? `
+        <div>
+          <strong>Labeling Experience:</strong>
+          <ul style="margin:4px 0 0 20px;">
+            ${raw.labeling_experience.map(l => `<li>${escapeHtml(l)}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  // Back button
+  html += `
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee;">
+      <button class="nav-btn" onclick="backToMatchList()">← Back to Match Results</button>
+    </div>
+  `;
+
+  modalBody.innerHTML = html;
+}
+
+function navigateCandidate(direction) {
+  if (!currentMatchContext) return;
+  const newIndex = currentMatchContext.currentIndex + direction;
+  if (newIndex >= 0 && newIndex < currentMatchContext.results.length) {
+    showCandidateDetail(newIndex);
+  }
+}
+
+function backToMatchList() {
+  if (!currentMatchContext) {
+    closeModal();
+    return;
+  }
+  // Re-render match detail
+  const matchId = currentMatchContext.matchRequest.id;
+  currentMatchContext = null;
+  showMatchDetail(matchId);
+}
+
+function getScoreClass(score) {
+  if (!score) return '';
+  if (score >= 0.7) return 'score-high';
+  if (score >= 0.5) return 'score-medium';
+  if (score >= 0.3) return 'score-low';
+  return 'score-poor';
 }
 
 // Tab switching
@@ -775,6 +981,7 @@ function switchTab(tabName) {
 // Modal
 function closeModal() {
   modal.classList.add('hidden');
+  currentMatchContext = null; // Clear navigation context
 }
 
 // Utilities

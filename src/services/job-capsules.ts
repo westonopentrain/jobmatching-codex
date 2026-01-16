@@ -6,7 +6,7 @@ import { CapsulePair, NormalizedJobPosting, UpsertJobRequest } from '../utils/ty
 import { createTextResponse } from './openai-responses';
 
 const JOB_CAPSULE_SYSTEM_MESSAGE =
-  'You create search queries for freelancer matching. Output what would appear in an ideal candidate\'s profile. Default to "General population" unless a specific profession, language, or technical skill is required. Return valid JSON only.';
+  'You create search queries for freelancer matching. Output what would appear in an ideal candidate\'s profile. Always identify the task role (e.g., "Video annotator", "Data collector") even for general jobs. Return valid JSON only.';
 
 const CAPSULE_TEMPERATURE = 0.2;
 // Allow additional room for the model to satisfy the strict
@@ -191,12 +191,19 @@ Ask yourself these questions IN ORDER. Stop at the first YES:
 3. Does this job require SPECIFIC TECHNICAL SKILLS (coding, design, data analysis)?
    → Output those skills (e.g., "Angular developer. JavaScript, TypeScript, frontend.")
 
-4. If NO to all above → Output: "General population. No specialized expertise required."
-   → This includes: language-specific annotation jobs, data collection, basic labeling, transcription review.
-   → These are general skills anyone can do (language filtering happens separately).
+4. If NO to all above → Output the TASK ROLE, not "General population"
+   → Identify the primary task: annotation, transcription, data collection, content review, etc.
+   → Output: "[Task type] specialist. [Relevant modality and skills]."
+   → Examples:
+     - "Video annotator. Transcription review and quality assurance."
+     - "Image annotator. Bounding box labeling and classification."
+     - "Data collector. Photo collection and metadata annotation."
+     - "Content reviewer. Text evaluation and classification."
+   → This allows users with matching domain experience to score higher.
+   → Language filtering is handled externally - do NOT include language in domain capsule.
 
-CRITICAL: Do NOT invent expertise. "Take photos and upload them" = general population, NOT "photography expertise".
-CRITICAL: "Annotate videos in Slovak" = general population (language filter handled externally), NOT "Slovak native speaker".
+CRITICAL: Do NOT invent professional expertise. "Take photos and upload them" = "Data collector", NOT "photography expertise".
+CRITICAL: Do NOT include language in domain. "Annotate videos in Slovak" = "Video annotator", NOT "Slovak native speaker".
 
 ## TASK CAPSULE (WHAT work will they do?)
 
@@ -221,14 +228,14 @@ Task Think: Modality=text, Work=evaluation/editing, AI workflow=SFT
 Task: "LLM response evaluation and SFT. Medical content review and editing."
 
 Job: "Take selfies and upload passport photos via NFC app"
-Domain Think: Profession? NO. Language? NO. Skills? NO → General
-Domain: "General population. No specialized expertise required."
+Domain Think: Profession? NO. Language? NO. Skills? NO → Task role = data collection
+Domain: "Data collector. Photo collection and identity verification."
 Task Think: Modality=image, Work=collection
 Task: "Image data collection and metadata annotation."
 
 Job: "Swedish video transcription QA"
-Domain Think: Profession? NO. Translation expertise? NO (just reviewing, not translating). Tech skills? NO → General
-Domain: "General population. No specialized expertise required."
+Domain Think: Profession? NO. Translation expertise? NO (just reviewing, not translating). Tech skills? NO → Task role = transcription QA
+Domain: "Transcription reviewer. Video transcription quality assurance."
 Task Think: Modality=video/audio, Work=QA, Technique=error classification
 Task: "Video transcription QA. Error classification and severity labeling."
 
@@ -239,12 +246,12 @@ Task Think: Modality=code, Work=review/QA, AI workflow=evaluating AI-generated c
 Task: "Code review and QA. Evaluation of AI-generated code responses."
 
 Job: "Draw bounding boxes on street images"
-Domain: "General population. No specialized expertise required."
+Domain: "Image annotator. Object detection and bounding box labeling."
 Task Think: Modality=image, Work=annotation, Technique=bounding box
 Task: "Image annotation. Bounding box labeling."
 
 Job: "Compare AI chatbot responses and pick the better one"
-Domain: "General population. No specialized expertise required."
+Domain: "Content evaluator. AI response assessment and comparison."
 Task Think: Modality=text, Work=evaluation, Technique=ranking, AI workflow=RLHF
 Task: "RLHF preference ranking. LLM response comparison and selection."
 
@@ -254,8 +261,8 @@ Return JSON:
 {
   "job_id": "<string>",
   "domain_capsule": {
-    "text": "<5-20 words: profession/language/skill OR 'General population. No specialized expertise required.'>",
-    "keywords": ["<5-10 relevant nouns, or 'none' if general population>"]
+    "text": "<5-20 words: profession/language/skill OR task role like 'Video annotator', 'Data collector', etc.>",
+    "keywords": ["<5-10 relevant nouns>"]
   },
   "task_capsule": {
     "text": "<10-25 words: task type, NOT procedural instructions>",
