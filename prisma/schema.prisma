@@ -49,6 +49,9 @@ model AuditUserUpsert {
   requestId String?  @map("request_id")
   createdAt DateTime @default(now()) @map("created_at")
 
+  // Raw input from Bubble
+  rawInput Json? @map("raw_input")
+
   // Input summary
   resumeChars          Int?     @map("resume_chars")
   hasWorkExperience    Boolean? @map("has_work_experience")

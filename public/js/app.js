@@ -498,6 +498,60 @@ async function showUserDetail(userId) {
       </div>
     `;
 
+    // Raw input from Bubble
+    if (latest.rawInput) {
+      const raw = latest.rawInput;
+      html += `
+        <div class="detail-section">
+          <h3>Raw Input from Bubble</h3>
+          <div class="detail-grid">
+            <div class="detail-item">
+              <span class="label">User ID</span>
+              <span class="value"><code>${escapeHtml(raw.user_id || '-')}</code></span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Country</span>
+              <span class="value">${escapeHtml(raw.country || '-')}</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Languages</span>
+              <span class="value">${Array.isArray(raw.languages) ? raw.languages.join(', ') : (raw.languages || '-')}</span>
+            </div>
+          </div>
+          ${raw.resume_text ? `
+            <div style="margin-top:12px;">
+              <strong>Resume Text:</strong>
+              <div class="capsule-text" style="margin-top:4px;max-height:200px;overflow-y:auto;white-space:pre-wrap;">${escapeHtml(raw.resume_text)}</div>
+            </div>
+          ` : ''}
+          ${raw.work_experience && raw.work_experience.length > 0 ? `
+            <div style="margin-top:12px;">
+              <strong>Work Experience:</strong>
+              <ul style="margin:4px 0 0 20px;">
+                ${raw.work_experience.map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+              </ul>
+            </div>
+          ` : ''}
+          ${raw.education && raw.education.length > 0 ? `
+            <div style="margin-top:12px;">
+              <strong>Education:</strong>
+              <ul style="margin:4px 0 0 20px;">
+                ${raw.education.map(e => `<li>${escapeHtml(e)}</li>`).join('')}
+              </ul>
+            </div>
+          ` : ''}
+          ${raw.labeling_experience && raw.labeling_experience.length > 0 ? `
+            <div style="margin-top:12px;">
+              <strong>Labeling Experience:</strong>
+              <ul style="margin:4px 0 0 20px;">
+                ${raw.labeling_experience.map(l => `<li>${escapeHtml(l)}</li>`).join('')}
+              </ul>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
     // Validation violations
     if (latest.validationViolations && latest.validationViolations.length > 0) {
       html += `
