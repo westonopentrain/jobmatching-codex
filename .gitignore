@@ -8,3 +8,4 @@ dist
 .vitest
 
 /src/generated/prisma
+CLAUDE.local.md

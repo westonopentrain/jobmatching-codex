@@ -185,22 +185,29 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         ...(normalized.country ? { country: normalized.country } : {}),
       };
 
+      // Only upsert task vector if user has labeling evidence
+      // Embeddings don't understand negation well, so "No AI/LLM data-labeling..."
+      // would have false-positive similarity to labeling jobs
+      const hasLabelingEvidence = !capsules.task.text.includes('No AI/LLM data-labeling');
+
       await upsertVector(domainVectorId, domainEmbedding, {
         ...userMetadata,
         section: 'domain' as const,
       });
 
-      await upsertVector(taskVectorId, taskEmbedding, {
-        ...userMetadata,
-        section: 'task' as const,
-      });
+      if (hasLabelingEvidence) {
+        await upsertVector(taskVectorId, taskEmbedding, {
+          ...userMetadata,
+          section: 'task' as const,
+        });
+      }
 
       log.info(
         {
           event: 'pinecone.upsert',
           userId: normalized.userId,
           domainVectorId,
-          taskVectorId,
+          taskVectorId: hasLabelingEvidence ? taskVectorId : null,
         },
         'Pinecone upsert completed'
       );
@@ -254,9 +261,10 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           chars: capsules.domain.text.length,
         },
         task: {
-          vector_id: taskVectorId,
+          vector_id: hasLabelingEvidence ? taskVectorId : null,
           capsule_text: capsules.task.text,
           chars: capsules.task.text.length,
+          ...(hasLabelingEvidence ? {} : { skipped: true }),
         },
         // Classification determines matching behavior
         classification: {
