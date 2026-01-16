@@ -183,15 +183,20 @@ Ask yourself these questions IN ORDER. Stop at the first YES:
 1. Does this job require a SPECIFIC PROFESSION (doctor, lawyer, engineer, accountant)?
    → Output that profession and domain (e.g., "OBGYN physician. Obstetrics and gynecology.")
 
-2. Does this job require a SPECIFIC LANGUAGE for the work itself (translation, transcription, localization)?
-   → Output that language (e.g., "Swedish native speaker.")
+2. Does this job require PROFESSIONAL TRANSLATION/LOCALIZATION expertise (not just speaking a language)?
+   → Output the language AND translation expertise (e.g., "Swedish translator. Professional translation and localization.")
+   → IMPORTANT: If job is just "annotate/review content in [language]" (not professional translation), skip to step 4.
+   → Language filtering is handled externally - focus on SKILLS, not language ability.
 
 3. Does this job require SPECIFIC TECHNICAL SKILLS (coding, design, data analysis)?
    → Output those skills (e.g., "Angular developer. JavaScript, TypeScript, frontend.")
 
 4. If NO to all above → Output: "General population. No specialized expertise required."
+   → This includes: language-specific annotation jobs, data collection, basic labeling, transcription review.
+   → These are general skills anyone can do (language filtering happens separately).
 
 CRITICAL: Do NOT invent expertise. "Take photos and upload them" = general population, NOT "photography expertise".
+CRITICAL: "Annotate videos in Slovak" = general population (language filter handled externally), NOT "Slovak native speaker".
 
 ## TASK CAPSULE (WHAT work will they do?)
 
@@ -222,8 +227,8 @@ Task Think: Modality=image, Work=collection
 Task: "Image data collection and metadata annotation."
 
 Job: "Swedish video transcription QA"
-Domain Think: Profession? NO. Language? YES → Swedish
-Domain: "Swedish native speaker."
+Domain Think: Profession? NO. Translation expertise? NO (just reviewing, not translating). Tech skills? NO → General
+Domain: "General population. No specialized expertise required."
 Task Think: Modality=video/audio, Work=QA, Technique=error classification
 Task: "Video transcription QA. Error classification and severity labeling."
 
