@@ -31,9 +31,11 @@ Ask yourself these questions IN ORDER. Stop at the FIRST YES:
    → Output: "[Profession title]. [Specialty/domain]."
    → Example: "OBGYN physician. Obstetrics and gynecology medical expertise."
 
-2. Does this person have SPECIFIC LANGUAGE expertise (native speaker, translator, linguist)?
-   → Output: "[Language] native speaker. [Relevant skills]."
-   → Example: "Swedish native speaker. Translation and localization expertise."
+2. Is this person's PRIMARY PROFESSION language-related (translator, interpreter, localization specialist, language teacher)?
+   → Only match if their MAIN JOB is translation, interpretation, or language services
+   → Do NOT match: software engineers, data scientists, etc. who happen to speak a language natively
+   → Output: "[Language] translator/interpreter. [Language services expertise]."
+   → Example: "Swedish translator. Translation, localization, and subtitling expertise."
 
 3. Does this person work with a SPECIFIC TECH FRAMEWORK/LANGUAGE as their PRIMARY skill?
    Look for: Angular, React, Vue, .NET, Java, Python, Node.js, iOS, Android, etc.
