@@ -40,6 +40,12 @@ export interface UserUpsertAuditData {
   evidenceDetected?: boolean | undefined;
   validationViolations?: string[] | undefined;
   elapsedMs?: number | undefined;
+  // Classification data
+  expertiseTier?: string | undefined;
+  credentials?: string[] | undefined;
+  subjectMatterCodes?: string[] | undefined;
+  yearsExperience?: number | undefined;
+  classificationConfidence?: number | undefined;
 }
 
 export interface MatchRequestAuditData {
@@ -140,6 +146,11 @@ export function auditUserUpsert(data: UserUpsertAuditData): void {
           taskCapsule: data.taskCapsule ?? null,
           evidenceDetected: data.evidenceDetected ?? null,
           validationViolations: data.validationViolations ?? [],
+          expertiseTier: data.expertiseTier ?? null,
+          credentials: data.credentials ?? [],
+          subjectMatterCodes: data.subjectMatterCodes ?? [],
+          yearsExperience: data.yearsExperience ?? null,
+          classificationConfidence: data.classificationConfidence ?? null,
           elapsedMs: data.elapsedMs ?? null,
         },
       });

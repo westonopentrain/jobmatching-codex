@@ -63,6 +63,13 @@ model AuditUserUpsert {
   evidenceDetected     Boolean? @map("evidence_detected")
   validationViolations String[] @map("validation_violations")
 
+  // Classification
+  expertiseTier            String?  @map("expertise_tier")
+  credentials              String[] @default([])
+  subjectMatterCodes       String[] @map("subject_matter_codes") @default([])
+  yearsExperience          Int?     @map("years_experience")
+  classificationConfidence Float?   @map("classification_confidence")
+
   // Metrics
   elapsedMs Int? @map("elapsed_ms")
 

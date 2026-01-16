@@ -160,6 +160,23 @@ async function deleteJob(jobId) {
   }
 }
 
+async function deleteUser(userId) {
+  if (!confirm(`Are you sure you want to delete user ${userId}?\n\nThis will remove:\n- User vectors from Pinecone\n- All audit records for this user`)) {
+    return;
+  }
+
+  try {
+    await apiDelete(`/v1/users/${encodeURIComponent(userId)}`);
+    alert('User deleted successfully');
+    closeModal();
+    loadUsers();
+    loadStats();
+  } catch (err) {
+    alert('Failed to delete user: ' + err.message);
+    console.error('Failed to delete user:', err);
+  }
+}
+
 async function loadStats() {
   try {
     const data = await apiFetch('/admin/stats');
@@ -230,10 +247,10 @@ async function loadUsers(userId = '') {
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td><code>${escapeHtml(truncate(user.userId, 20))}</code></td>
+        <td><span class="badge badge-${user.expertiseTier || 'entry'}">${user.expertiseTier || 'entry'}</span></td>
         <td>${escapeHtml(user.country || '-')}</td>
         <td>${user.languages?.join(', ') || '-'}</td>
         <td><span class="badge badge-${user.evidenceDetected ? 'success' : 'warning'}">${user.evidenceDetected ? 'Yes' : 'No'}</span></td>
-        <td>${user.resumeChars ? user.resumeChars.toLocaleString() + ' chars' : '-'}</td>
         <td>${formatDate(user.createdAt)}</td>
       `;
       tr.addEventListener('click', () => showUserDetail(user.userId));
@@ -405,6 +422,47 @@ async function showUserDetail(userId) {
       <div class="detail-header">
         <h2>User Profile</h2>
         <div class="meta">User ID: <code>${escapeHtml(userId)}</code> | Created: ${formatDate(latest.createdAt)}</div>
+        <button class="btn-delete" onclick="deleteUser('${escapeHtml(userId)}')">Delete User</button>
+      </div>
+
+      <div class="detail-section">
+        <h3>Classification</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Expertise Tier</span>
+            <span class="value"><span class="badge badge-${latest.expertiseTier || 'entry'}">${latest.expertiseTier || 'entry'}</span></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Confidence</span>
+            <span class="value">${latest.classificationConfidence ? (latest.classificationConfidence * 100).toFixed(0) + '%' : '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Years Experience</span>
+            <span class="value">${latest.yearsExperience ?? '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Processing Time</span>
+            <span class="value">${latest.elapsedMs ? latest.elapsedMs + 'ms' : '-'}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h3>Credentials</h3>
+        <div class="keywords">
+          ${(latest.credentials && latest.credentials.length > 0)
+            ? latest.credentials.map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
+            : '<span style="color:#666;">None specified</span>'}
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h3>Subject Matter Expertise</h3>
+        <div class="keywords">
+          ${(latest.subjectMatterCodes && latest.subjectMatterCodes.length > 0)
+            ? latest.subjectMatterCodes.map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
+            : '<span style="color:#666;">None specified</span>'}
+        </div>
       </div>
 
       <div class="detail-section">
@@ -423,30 +481,8 @@ async function showUserDetail(userId) {
             <span class="value">${latest.resumeChars ? latest.resumeChars.toLocaleString() + ' chars' : '-'}</span>
           </div>
           <div class="detail-item">
-            <span class="label">Processing Time</span>
-            <span class="value">${latest.elapsedMs ? latest.elapsedMs + 'ms' : '-'}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="detail-section">
-        <h3>Experience Flags</h3>
-        <div class="detail-grid">
-          <div class="detail-item">
-            <span class="label">Work Experience</span>
-            <span class="value"><span class="badge badge-${latest.hasWorkExperience ? 'success' : 'warning'}">${latest.hasWorkExperience ? 'Yes' : 'No'}</span></span>
-          </div>
-          <div class="detail-item">
-            <span class="label">Education</span>
-            <span class="value"><span class="badge badge-${latest.hasEducation ? 'success' : 'warning'}">${latest.hasEducation ? 'Yes' : 'No'}</span></span>
-          </div>
-          <div class="detail-item">
             <span class="label">Labeling Experience</span>
-            <span class="value"><span class="badge badge-${latest.hasLabelingExperience ? 'success' : 'warning'}">${latest.hasLabelingExperience ? 'Yes' : 'No'}</span></span>
-          </div>
-          <div class="detail-item">
-            <span class="label">Evidence Detected</span>
-            <span class="value"><span class="badge badge-${latest.evidenceDetected ? 'success' : 'error'}">${latest.evidenceDetected ? 'Yes' : 'No'}</span></span>
+            <span class="value"><span class="badge badge-${latest.evidenceDetected ? 'success' : 'warning'}">${latest.evidenceDetected ? 'Yes' : 'No'}</span></span>
           </div>
         </div>
       </div>

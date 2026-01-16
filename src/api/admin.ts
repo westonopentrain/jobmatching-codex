@@ -117,6 +117,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         languages: true,
         evidenceDetected: true,
         validationViolations: true,
+        expertiseTier: true,
+        credentials: true,
+        subjectMatterCodes: true,
+        yearsExperience: true,
+        classificationConfidence: true,
         elapsedMs: true,
       },
     });
