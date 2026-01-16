@@ -249,7 +249,7 @@ async function loadUsers(userId = '') {
         <td><code>${escapeHtml(truncate(user.userId, 20))}</code></td>
         <td><span class="badge badge-${user.expertiseTier || 'entry'}">${user.expertiseTier || 'entry'}</span></td>
         <td>${escapeHtml(user.country || '-')}</td>
-        <td>${user.languages?.join(', ') || '-'}</td>
+        <td>${escapeHtml(truncate(user.domainCapsule || '-', 60))}</td>
         <td><span class="badge badge-${user.evidenceDetected ? 'success' : 'warning'}">${user.evidenceDetected ? 'Yes' : 'No'}</span></td>
         <td>${formatDate(user.createdAt)}</td>
       `;
