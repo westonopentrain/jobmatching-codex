@@ -37,7 +37,7 @@ describe('POST /v1/users/upsert', () => {
 
     mockGenerateCapsules.mockResolvedValue({
       domain: { text: 'domain capsule' },
-      task: { text: 'task capsule' },
+      task: { text: 'skills capsule' },
     });
 
     mockClassifyUser.mockResolvedValue({
@@ -54,7 +54,7 @@ describe('POST /v1/users/upsert', () => {
     mockEmbedText.mockResolvedValue(fakeVector);
   });
 
-  it('only upserts domain vector when user has no labeling experience', async () => {
+  it('always upserts both domain and skills vectors', async () => {
     const app = buildServer();
 
     const response = await app.inject({
@@ -81,31 +81,36 @@ describe('POST /v1/users/upsert', () => {
       })
     );
 
-    // Task vector should NOT be upserted (no labeling experience)
-    expect(mockUpsertVector).not.toHaveBeenCalledWith(
+    // Skills (task) vector should also be upserted - always, regardless of labeling experience
+    expect(mockUpsertVector).toHaveBeenCalledWith(
       'usr_423423::task',
       expect.any(Array),
-      expect.objectContaining({ section: 'task' })
+      expect.objectContaining({
+        user_id: '423423',
+        section: 'task',
+        model: 'test-embedding-model',
+        type: 'user',
+      })
     );
 
-    // Response should indicate task was skipped
+    // Both vectors should be in the response
     const body = JSON.parse(response.body);
-    expect(body.task.skipped).toBe(true);
-    expect(body.task.vector_id).toBeNull();
+    expect(body.domain.vector_id).toBe('usr_423423::domain');
+    expect(body.task.vector_id).toBe('usr_423423::task');
+    expect(body.task.skipped).toBeUndefined();
 
     await app.close();
   });
 
-  it('upserts both vectors when user has labeling experience', async () => {
-    // Override mock to have labeling experience
+  it('includes classification data in response', async () => {
     mockClassifyUser.mockResolvedValue({
-      expertiseTier: 'entry',
-      credentials: [],
-      subjectMatterCodes: [],
-      yearsExperience: 0,
+      expertiseTier: 'specialist',
+      credentials: ['MD'],
+      subjectMatterCodes: ['medicine'],
+      yearsExperience: 10,
       hasLabelingExperience: true,
-      confidence: 0.8,
-      reasoning: 'has labeling experience',
+      confidence: 0.9,
+      reasoning: 'Medical professional',
     });
 
     const app = buildServer();
@@ -116,38 +121,16 @@ describe('POST /v1/users/upsert', () => {
       headers: { authorization: 'Bearer test-key' },
       payload: {
         user_id: '423423',
-        resume_text: 'Sample resume with labeling experience',
+        resume_text: 'Medical professional resume',
       },
     });
 
     expect(response.statusCode).toBe(200);
 
-    // Domain vector should be upserted
-    expect(mockUpsertVector).toHaveBeenCalledWith(
-      'usr_423423::domain',
-      expect.any(Array),
-      expect.objectContaining({
-        user_id: '423423',
-        section: 'domain',
-        type: 'user',
-      })
-    );
-
-    // Task vector should also be upserted
-    expect(mockUpsertVector).toHaveBeenCalledWith(
-      'usr_423423::task',
-      expect.any(Array),
-      expect.objectContaining({
-        user_id: '423423',
-        section: 'task',
-        type: 'user',
-      })
-    );
-
-    // Response should NOT have skipped flag
     const body = JSON.parse(response.body);
-    expect(body.task.skipped).toBeUndefined();
-    expect(body.task.vector_id).toBe('usr_423423::task');
+    expect(body.classification.expertise_tier).toBe('specialist');
+    expect(body.classification.credentials).toContain('MD');
+    expect(body.classification.has_labeling_experience).toBe(true);
 
     await app.close();
   });
