@@ -116,6 +116,25 @@ interface QueryOptions {
   namespace?: string;
 }
 
+export async function deleteVectors(ids: string[]): Promise<void> {
+  if (ids.length === 0) {
+    return;
+  }
+
+  const index = getIndex();
+  await withRetry(() => index.deleteMany(ids)).catch((error) => {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError({
+      code: 'PINECONE_DELETE_FAILURE',
+      statusCode: 502,
+      message: 'Failed to delete vectors from Pinecone',
+      details: { message: (error as Error).message, ids },
+    });
+  });
+}
+
 export async function queryByVector(options: QueryOptions): Promise<QueryMatch[]> {
   const index = getIndex();
   const queryRequest: Record<string, unknown> = {

@@ -131,6 +131,35 @@ async function apiFetch(endpoint) {
   return response.json();
 }
 
+async function apiDelete(endpoint) {
+  const response = await fetch(endpoint, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${apiKey}` }
+  });
+  if (response.status === 401) {
+    handleLogout();
+    throw new Error('Unauthorized');
+  }
+  return response.json();
+}
+
+async function deleteJob(jobId) {
+  if (!confirm(`Are you sure you want to delete job ${jobId}?\n\nThis will remove:\n- Job vectors from Pinecone\n- All audit records for this job`)) {
+    return;
+  }
+
+  try {
+    await apiDelete(`/v1/jobs/${encodeURIComponent(jobId)}`);
+    alert('Job deleted successfully');
+    closeModal();
+    loadJobs();
+    loadStats();
+  } catch (err) {
+    alert('Failed to delete job: ' + err.message);
+    console.error('Failed to delete job:', err);
+  }
+}
+
 async function loadStats() {
   try {
     const data = await apiFetch('/admin/stats');
@@ -270,6 +299,7 @@ async function showJobDetail(jobId) {
       <div class="detail-header">
         <h2>${escapeHtml(latest.title || 'Untitled Job')}</h2>
         <div class="meta">Job ID: <code>${escapeHtml(jobId)}</code> | Created: ${formatDate(latest.createdAt)}</div>
+        <button class="btn-delete" onclick="deleteJob('${escapeHtml(jobId)}')">Delete Job</button>
       </div>
 
       <div class="detail-section">

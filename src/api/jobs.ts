@@ -5,7 +5,8 @@ import { AppError, toErrorResponse } from '../utils/errors';
 import { ensureAuthorized } from '../utils/auth';
 import { requireEnv } from '../utils/env';
 import { EMBEDDING_DIMENSION, EMBEDDING_MODEL, embedText } from '../services/embeddings';
-import { upsertVector } from '../services/pinecone';
+import { upsertVector, deleteVectors } from '../services/pinecone';
+import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
 import { classifyJobSync } from '../services/job-classifier';
@@ -212,6 +213,67 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       request.log.error({ err: error, event: 'jobs.upsert.error', elapsedMs: errorElapsedRounded }, 'Unexpected error during job upsert');
       const appError = new AppError({
         code: 'JOB_UPSERT_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // DELETE endpoint for removing jobs
+  fastify.delete('/v1/jobs/:jobId', async (request, reply) => {
+    const log = request.log.child({ route: 'jobs.delete' });
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { jobId } = request.params as { jobId: string };
+      if (!jobId || typeof jobId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Job ID is required',
+        });
+      }
+
+      log.info({ event: 'jobs.delete.start', jobId }, 'Starting job deletion');
+
+      // Delete vectors from Pinecone
+      const domainVectorId = `job_${jobId}::domain`;
+      const taskVectorId = `job_${jobId}::task`;
+      await deleteVectors([domainVectorId, taskVectorId]);
+      log.info({ event: 'jobs.delete.pinecone', jobId }, 'Deleted job vectors from Pinecone');
+
+      // Delete audit records from PostgreSQL
+      let auditDeleted = 0;
+      if (isDatabaseAvailable()) {
+        const db = getDb();
+        if (db) {
+          const result = await db.auditJobUpsert.deleteMany({
+            where: { jobId },
+          });
+          auditDeleted = result.count;
+          log.info({ event: 'jobs.delete.audit', jobId, count: auditDeleted }, 'Deleted job audit records');
+        }
+      }
+
+      return reply.status(200).send({
+        status: 'ok',
+        job_id: jobId,
+        deleted: {
+          vectors: [domainVectorId, taskVectorId],
+          audit_records: auditDeleted,
+        },
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        log.warn({ error: error.message, code: error.code }, 'Handled job delete error');
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error }, 'Unexpected error during job delete');
+      const appError = new AppError({
+        code: 'JOB_DELETE_FAILURE',
         statusCode: 500,
         message: 'Unexpected server error',
       });
