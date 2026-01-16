@@ -285,11 +285,11 @@ async function loadMatches(jobId = '') {
         <td><code>${escapeHtml(truncate(match.jobId, 20))}</code></td>
         <td>${match.candidateCount || '-'}</td>
         <td>${match.resultsReturned || 0}</td>
-        <td>D:${match.wDomain?.toFixed(2) || '-'} T:${match.wTask?.toFixed(2) || '-'}</td>
-        <td>${match.thresholdUsed?.toFixed(2) || '-'}</td>
+        <td><span class="badge badge-${match.weightsSource === 'auto' ? 'success' : 'generic'}">${match.weightsSource || 'manual'}</span> D:${match.wDomain?.toFixed(2) || '-'} T:${match.wTask?.toFixed(2) || '-'}</td>
+        <td>${match.thresholdUsed?.toFixed(2) || 'none'}</td>
         <td>${formatDate(match.createdAt)}</td>
       `;
-      tr.addEventListener('click', () => showJobDetail(match.jobId));
+      tr.addEventListener('click', () => showMatchDetail(match.id));
       tbody.appendChild(tr);
     });
   } catch (err) {
@@ -601,6 +601,155 @@ async function showUserDetail(userId) {
   } catch (err) {
     modalBody.innerHTML = '<p class="error">Error loading user details</p>';
     console.error('Failed to load user detail:', err);
+  }
+}
+
+// Match Detail View
+async function showMatchDetail(matchId) {
+  modalBody.innerHTML = '<div class="loading">Loading...</div>';
+  modal.classList.remove('hidden');
+
+  try {
+    const data = await apiFetch(`/admin/matches/${matchId}`);
+
+    if (data.error) {
+      modalBody.innerHTML = `<p class="error">${escapeHtml(data.error)}</p>`;
+      return;
+    }
+
+    const m = data.matchRequest;
+    const job = data.jobInfo;
+
+    let html = `
+      <div class="detail-header">
+        <h2>Match Scoring Results</h2>
+        <div class="meta">
+          Job: <code>${escapeHtml(m.jobId)}</code> |
+          ${job?.title ? `"${escapeHtml(job.title)}"` : ''} |
+          Scored: ${formatDate(m.createdAt)}
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h3>Scoring Configuration</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Job Classification</span>
+            <span class="value"><span class="badge badge-${job?.jobClass || 'generic'}">${job?.jobClass || '-'}</span></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Weights Source</span>
+            <span class="value"><span class="badge badge-${m.weightsSource === 'auto' ? 'success' : 'generic'}">${m.weightsSource || 'manual'}</span></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Domain Weight</span>
+            <span class="value">${m.wDomain ? (m.wDomain * 100).toFixed(0) + '%' : '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Task Weight</span>
+            <span class="value">${m.wTask ? (m.wTask * 100).toFixed(0) + '%' : '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Candidates Scored</span>
+            <span class="value">${m.candidateCount || '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Results Returned</span>
+            <span class="value">${m.resultsReturned || '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Threshold</span>
+            <span class="value">${m.thresholdUsed?.toFixed(2) || 'none'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Processing Time</span>
+            <span class="value">${m.elapsedMs ? m.elapsedMs + 'ms' : '-'}</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Job capsules for reference
+    if (job) {
+      html += `
+        <div class="detail-section collapsible">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">Job Capsules (click to expand)</h3>
+          <div class="collapsible-content">
+            <div style="margin-bottom: 12px;">
+              <strong>Domain:</strong>
+              <div class="capsule-text" style="margin-top:4px;">${escapeHtml(job.domainCapsule || '-')}</div>
+            </div>
+            <div>
+              <strong>Task:</strong>
+              <div class="capsule-text" style="margin-top:4px;">${escapeHtml(job.taskCapsule || '-')}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // All scored users
+    html += `
+      <div class="detail-section">
+        <h3>All Scored Users (${m.results?.length || 0} candidates)</h3>
+        <table class="detail-table score-table">
+          <thead>
+            <tr>
+              <th style="width:40px">Rank</th>
+              <th style="width:80px">Final</th>
+              <th style="width:70px">Domain</th>
+              <th style="width:70px">Task</th>
+              <th>User Info</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    if (m.results && m.results.length > 0) {
+      m.results.forEach((r, idx) => {
+        const user = r.userInfo;
+        const finalPct = r.finalScore ? (r.finalScore * 100).toFixed(1) : '-';
+        const domainPct = r.sDomain ? (r.sDomain * 100).toFixed(1) : '-';
+        const taskPct = r.sTask ? (r.sTask * 100).toFixed(1) : '-';
+
+        // Color code by score
+        let scoreClass = '';
+        if (r.finalScore >= 0.7) scoreClass = 'score-high';
+        else if (r.finalScore >= 0.5) scoreClass = 'score-medium';
+        else if (r.finalScore >= 0.3) scoreClass = 'score-low';
+        else scoreClass = 'score-poor';
+
+        const userCaption = user?.domainCapsule ? truncate(user.domainCapsule.split('Keywords')[0], 80) : '-';
+        const credentials = user?.credentials?.length ? user.credentials.join(', ') : '';
+        const expertise = user?.expertiseTier || 'entry';
+
+        html += `
+          <tr class="clickable-row ${scoreClass}" onclick="showUserDetail('${escapeHtml(r.userId)}')">
+            <td><strong>#${r.rank || idx + 1}</strong></td>
+            <td><strong>${finalPct}%</strong></td>
+            <td>${domainPct}%</td>
+            <td>${taskPct}%</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <code style="font-size:11px;">${escapeHtml(truncate(r.userId, 18))}</code>
+                <span class="badge badge-${expertise}" style="font-size:10px;">${expertise}</span>
+                ${credentials ? `<span style="font-size:11px;color:#666;">${escapeHtml(truncate(credentials, 30))}</span>` : ''}
+              </div>
+              <div style="font-size:11px;color:#666;margin-top:2px;">${escapeHtml(userCaption)}</div>
+            </td>
+          </tr>
+        `;
+      });
+    } else {
+      html += '<tr><td colspan="5" style="text-align:center;color:#666;">No results</td></tr>';
+    }
+
+    html += '</tbody></table></div>';
+
+    modalBody.innerHTML = html;
+  } catch (err) {
+    modalBody.innerHTML = '<p class="error">Error loading match details</p>';
+    console.error('Failed to load match detail:', err);
   }
 }
 

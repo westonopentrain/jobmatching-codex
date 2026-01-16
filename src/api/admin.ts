@@ -215,6 +215,81 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     return { count: records.length, records };
   });
 
+  // Get a single match request with all results
+  fastify.get('/admin/matches/:matchId', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { matchId } = request.params as { matchId: string };
+    const id = parseInt(matchId, 10);
+    if (isNaN(id)) {
+      return { error: 'Invalid match ID' };
+    }
+
+    const matchRequest = await db.auditMatchRequest.findUnique({
+      where: { id },
+      include: {
+        results: {
+          orderBy: { rank: 'asc' },
+        },
+      },
+    });
+
+    if (!matchRequest) {
+      return { error: 'Match request not found' };
+    }
+
+    // Get job info for context
+    const jobInfo = await db.auditJobUpsert.findFirst({
+      where: { jobId: matchRequest.jobId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        title: true,
+        jobClass: true,
+        domainCapsule: true,
+        taskCapsule: true,
+      },
+    });
+
+    // Get user info for each result
+    const userIds = matchRequest.results.map((r) => r.userId);
+    const userInfos = await db.auditUserUpsert.findMany({
+      where: { userId: { in: userIds } },
+      distinct: ['userId'],
+      orderBy: { createdAt: 'desc' },
+      select: {
+        userId: true,
+        domainCapsule: true,
+        taskCapsule: true,
+        expertiseTier: true,
+        credentials: true,
+        country: true,
+        languages: true,
+      },
+    });
+
+    const userMap = new Map(userInfos.map((u) => [u.userId, u]));
+
+    // Enrich results with user info
+    const enrichedResults = matchRequest.results.map((r) => ({
+      ...r,
+      userInfo: userMap.get(r.userId) || null,
+    }));
+
+    logger.info(
+      { event: 'admin.match.detail', matchId: id, resultsCount: matchRequest.results.length },
+      'Admin queried match detail'
+    );
+
+    return {
+      matchRequest: {
+        ...matchRequest,
+        results: enrichedResults,
+      },
+      jobInfo,
+    };
+  });
+
   // Get aggregate stats
   fastify.get('/admin/stats', async () => {
     const db = getDb();
