@@ -185,10 +185,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         ...(normalized.country ? { country: normalized.country } : {}),
       };
 
-      // Only upsert task vector if user has labeling evidence
-      // Embeddings don't understand negation well, so "No AI/LLM data-labeling..."
-      // would have false-positive similarity to labeling jobs
-      const hasLabelingEvidence = !capsules.task.text.includes('No AI/LLM data-labeling');
+      // Only upsert task vector if user has labeling experience (per LLM classifier)
+      // Users without labeling experience get task score = 0 during matching
+      const hasLabelingEvidence = classification.hasLabelingExperience;
 
       await upsertVector(domainVectorId, domainEmbedding, {
         ...userMetadata,
