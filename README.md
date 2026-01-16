@@ -52,6 +52,7 @@ Copy `.env.example` to `.env` during local development and provide the following
 
 | `LOG_LEVEL` | ➖ | Pino log level (`info` by default). |
 | `PORT` | ➖ | HTTP port (`8080` by default). |
+| `DATABASE_URL` | ➖ | PostgreSQL connection string for audit logging. Auto-configured by Render's Blueprint. |
 
 > For the optional index creation script you can also set `PINECONE_CLOUD` and `PINECONE_REGION` (default: `aws` / `us-east-1`).
 
@@ -117,7 +118,28 @@ During local runs the service logs request lifecycle events (start → capsules 
      }'
    ```
 
-Render’s logs will show the lifecycle events and you should receive `status: "ok"` along with the capsule texts and vector IDs.
+Render's logs will show the lifecycle events and you should receive `status: "ok"` along with the capsule texts and vector IDs.
+
+---
+
+## Database and migrations (Render)
+
+The service uses a PostgreSQL database (provisioned automatically by Render's Blueprint) for audit logging. The database stores records of all job/user upserts and match requests for debugging and analytics.
+
+**Migrations run automatically on every deploy.** The `render.yaml` configures the start command as:
+```
+npx prisma migrate deploy && node dist/server.js
+```
+
+This means:
+- When you merge a PR that includes schema changes, just deploy (or let Render auto-deploy)
+- Prisma will automatically apply any pending migrations before the server starts
+- No manual migration commands are needed on Render
+
+**If a deploy fails due to migration issues:**
+1. Check Render logs for the specific error
+2. Ensure the `DATABASE_URL` environment variable is correctly set (should be auto-configured by the Blueprint)
+3. If needed, you can run migrations manually from Render's Shell tab: `npx prisma migrate deploy`
 
 ---
 
