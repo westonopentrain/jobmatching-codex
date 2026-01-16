@@ -133,6 +133,13 @@ export interface UserVectorMetadata {
   model: string;
   type: 'user';
 
+  // Classification
+  expertise_tier: ExpertiseTier;
+  credentials: string[];
+  subject_matter_codes: string[];
+  years_experience: number;
+  has_labeling_experience: boolean;
+
   // Geographic/language
   country?: string;
   languages: string[];
