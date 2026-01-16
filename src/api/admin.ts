@@ -207,12 +207,28 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
+    // Fetch job titles for all unique job IDs
+    const jobIds = [...new Set(records.map((r) => r.jobId))];
+    const jobs = await db.auditJobUpsert.findMany({
+      where: { jobId: { in: jobIds } },
+      orderBy: { createdAt: 'desc' },
+      distinct: ['jobId'],
+      select: { jobId: true, title: true },
+    });
+    const jobTitleMap = new Map(jobs.map((j) => [j.jobId, j.title]));
+
+    // Add job title to each record
+    const recordsWithTitle = records.map((r) => ({
+      ...r,
+      jobTitle: jobTitleMap.get(r.jobId) || null,
+    }));
+
     logger.info(
       { event: 'admin.matches.query', count: records.length, jobId },
       'Admin queried match audit records'
     );
 
-    return { count: records.length, records };
+    return { count: recordsWithTitle.length, records: recordsWithTitle };
   });
 
   // Get a single match request with all results

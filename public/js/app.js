@@ -294,8 +294,12 @@ async function loadMatches(jobId = '') {
 
     data.records.forEach(match => {
       const tr = document.createElement('tr');
+      const jobDisplay = match.jobTitle || truncate(match.jobId, 20);
       tr.innerHTML = `
-        <td><code>${escapeHtml(truncate(match.jobId, 20))}</code></td>
+        <td>
+          <div style="font-weight:500;">${escapeHtml(jobDisplay)}</div>
+          <div style="font-size:11px;color:#666;"><code>${escapeHtml(truncate(match.jobId, 24))}</code></div>
+        </td>
         <td>${match.candidateCount || '-'}</td>
         <td>${match.resultsReturned || 0}</td>
         <td><span class="badge badge-${match.weightsSource === 'auto' ? 'success' : 'generic'}">${match.weightsSource || 'manual'}</span> D:${match.wDomain?.toFixed(2) || '-'} T:${match.wTask?.toFixed(2) || '-'}</td>
