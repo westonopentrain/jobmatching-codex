@@ -29,6 +29,7 @@ export interface JobUpsertAuditData {
 export interface UserUpsertAuditData {
   userId: string;
   requestId?: string | undefined;
+  rawInput?: Record<string, unknown> | undefined;
   resumeChars?: number | undefined;
   hasWorkExperience?: boolean | undefined;
   hasEducation?: boolean | undefined;
@@ -136,6 +137,7 @@ export function auditUserUpsert(data: UserUpsertAuditData): void {
         data: {
           userId: data.userId,
           requestId: data.requestId ?? null,
+          ...(data.rawInput ? { rawInput: data.rawInput as Prisma.InputJsonValue } : {}),
           resumeChars: data.resumeChars ?? null,
           hasWorkExperience: data.hasWorkExperience ?? null,
           hasEducation: data.hasEducation ?? null,

@@ -224,6 +224,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       auditUserUpsert({
         userId: normalized.userId,
         requestId,
+        rawInput: bodyWithAliases as Record<string, unknown>,
         resumeChars: normalized.resumeText.length,
         hasWorkExperience: (normalized.workExperience?.length ?? 0) > 0,
         hasEducation: (normalized.education?.length ?? 0) > 0,
