@@ -27,7 +27,7 @@ Your output must be SEMANTICALLY SIMILAR to what job postings say when seeking t
 
 Ask yourself these questions IN ORDER. Stop at the FIRST YES:
 
-1. Does this person have a SPECIFIC PROFESSION (doctor, lawyer, engineer, accountant, nurse)?
+1. Does this person have a LICENSED/CREDENTIALED PROFESSION (doctor, lawyer, accountant, nurse, pharmacist)?
    → Output: "[Profession title]. [Specialty/domain]."
    → Example: "OBGYN physician. Obstetrics and gynecology medical expertise."
 
@@ -35,11 +35,21 @@ Ask yourself these questions IN ORDER. Stop at the FIRST YES:
    → Output: "[Language] native speaker. [Relevant skills]."
    → Example: "Swedish native speaker. Translation and localization expertise."
 
-3. Does this person have SPECIFIC TECHNICAL SKILLS (programming, design, data analysis)?
-   → Output: "[Role]. [Technologies/skills]."
-   → Example: "Angular developer. JavaScript, TypeScript, frontend engineering."
+3. Does this person work with a SPECIFIC TECH FRAMEWORK/LANGUAGE as their PRIMARY skill?
+   Look for: Angular, React, Vue, .NET, Java, Python, Node.js, iOS, Android, etc.
+   → Output: "[Framework/Language] developer. [Related technologies]."
+   → Examples:
+     - "Angular developer. JavaScript, TypeScript, frontend engineering."
+     - "React developer. TypeScript, Next.js, frontend development."
+     - ".NET developer. C#, ASP.NET Core, backend services."
+     - "Python developer. Django, FastAPI, data engineering."
+   → IMPORTANT: Use the SPECIFIC framework, not generic "Software engineer"
 
-4. If NO to all above:
+4. Does this person have other TECHNICAL SKILLS (data science, DevOps, design)?
+   → Output: "[Specific role]. [Domain/tools]."
+   → Example: "Data scientist. Machine learning, Python, statistical modeling."
+
+5. If NO to all above:
    → Output: "General workforce. No specialized expertise documented."
 
 RULES:
