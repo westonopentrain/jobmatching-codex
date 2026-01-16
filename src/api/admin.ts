@@ -306,6 +306,46 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     };
   });
 
+  // Delete a match request and its results
+  fastify.delete('/admin/matches/:matchId', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { matchId } = request.params as { matchId: string };
+    const id = parseInt(matchId, 10);
+
+    if (isNaN(id)) {
+      return { error: 'Invalid match ID' };
+    }
+
+    // First delete the results (due to foreign key constraint)
+    const deletedResults = await db.auditMatchResult.deleteMany({
+      where: { matchRequestId: id },
+    });
+
+    // Then delete the match request
+    const deletedMatch = await db.auditMatchRequest.delete({
+      where: { id },
+    }).catch(() => null);
+
+    if (!deletedMatch) {
+      return { error: 'Match not found' };
+    }
+
+    logger.info(
+      { event: 'admin.match.delete', matchId: id, resultsDeleted: deletedResults.count },
+      'Admin deleted match request'
+    );
+
+    return {
+      status: 'ok',
+      deleted: {
+        matchId: id,
+        resultsCount: deletedResults.count,
+      },
+    };
+  });
+
   // Get aggregate stats
   fastify.get('/admin/stats', async () => {
     const db = getDb();

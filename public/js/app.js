@@ -190,6 +190,23 @@ async function deleteUser(userId) {
   }
 }
 
+async function deleteMatch(matchId) {
+  if (!confirm(`Are you sure you want to delete this match?\n\nThis will remove the match request and all scored results from the audit trail.`)) {
+    return;
+  }
+
+  try {
+    await apiDelete(`/admin/matches/${matchId}`);
+    alert('Match deleted successfully');
+    closeModal();
+    loadMatches();
+    loadStats();
+  } catch (err) {
+    alert('Failed to delete match: ' + err.message);
+    console.error('Failed to delete match:', err);
+  }
+}
+
 async function loadStats() {
   try {
     const data = await apiFetch('/admin/stats');
@@ -639,12 +656,12 @@ async function showMatchDetail(matchId) {
 
     let html = `
       <div class="detail-header">
-        <h2>Match Scoring Results</h2>
+        <h2>${job?.title ? escapeHtml(job.title) : 'Match Scoring Results'}</h2>
         <div class="meta">
-          Job: <code>${escapeHtml(m.jobId)}</code> |
-          ${job?.title ? `"${escapeHtml(job.title)}"` : ''} |
+          Job ID: <code>${escapeHtml(m.jobId)}</code> |
           Scored: ${formatDate(m.createdAt)}
         </div>
+        <button class="btn-delete" onclick="deleteMatch(${m.id})">Delete Match</button>
       </div>
 
       <div class="detail-section">
