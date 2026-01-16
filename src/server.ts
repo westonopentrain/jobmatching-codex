@@ -14,6 +14,25 @@ export function buildServer() {
     logger: loggerOptions,
   });
 
+  // Custom JSON parser that logs raw body on parse errors
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    try {
+      const json = JSON.parse(body as string);
+      done(null, json);
+    } catch (err) {
+      // Log the raw body for debugging
+      req.log.error(
+        {
+          event: 'json.parse.error',
+          rawBody: typeof body === 'string' ? body.substring(0, 1000) : 'not-a-string',
+          bodyLength: typeof body === 'string' ? body.length : 0,
+        },
+        'Failed to parse JSON body - raw content logged'
+      );
+      done(err as Error, undefined);
+    }
+  });
+
   // Serve static files from public directory
   app.register(fastifyStatic, {
     root: path.join(__dirname, '..', 'public'),
