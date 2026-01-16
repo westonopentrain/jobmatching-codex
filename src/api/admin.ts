@@ -222,7 +222,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
     const [jobCount, userCount, matchCount, resultCount] = await Promise.all([
       db.auditJobUpsert.count(),
-      db.auditUserUpsert.count(),
+      // Count unique users, not total audit records
+      db.auditUserUpsert.groupBy({ by: ['userId'] }).then((r) => r.length),
       db.auditMatchRequest.count(),
       db.auditMatchResult.count(),
     ]);
@@ -231,7 +232,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const [jobsLast24h, usersLast24h, matchesLast24h] = await Promise.all([
       db.auditJobUpsert.count({ where: { createdAt: { gte: since } } }),
-      db.auditUserUpsert.count({ where: { createdAt: { gte: since } } }),
+      // Count unique users in last 24h
+      db.auditUserUpsert.groupBy({ by: ['userId'], where: { createdAt: { gte: since } } }).then((r) => r.length),
       db.auditMatchRequest.count({ where: { createdAt: { gte: since } } }),
     ]);
 
