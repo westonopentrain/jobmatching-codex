@@ -24,6 +24,8 @@ export const LABELING_EVIDENCE_ALLOWLIST = {
   'response writing',
   'response rating',
   'response evaluation',
+  'prompt and response',
+  'prompt response',
   'data cleaning for model training',
   'model critique',
   'benchmark creation',
@@ -34,6 +36,8 @@ export const LABELING_EVIDENCE_ALLOWLIST = {
   'de-biasing',
   'safety review',
   'safety reviews',
+  'data specialist',
+  'training specialist',
 ],
   labelTypes: [
     'ner',
@@ -115,6 +119,9 @@ export const LABELING_EVIDENCE_ALLOWLIST = {
   ],
   llmTraining: [
     'llm',
+    'llm training',
+    'ai training',
+    'training data',
     'fine-tuning',
     'fine tuning',
     'finetuning',

@@ -102,6 +102,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
     const records = await db.auditUserUpsert.findMany({
       where,
+      distinct: ['userId'],
       orderBy: { createdAt: 'desc' },
       take,
       select: {
@@ -115,6 +116,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         hasLabelingExperience: true,
         country: true,
         languages: true,
+        domainCapsule: true,
         evidenceDetected: true,
         validationViolations: true,
         expertiseTier: true,
