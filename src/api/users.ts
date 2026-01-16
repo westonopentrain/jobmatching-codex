@@ -185,28 +185,23 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         ...(normalized.country ? { country: normalized.country } : {}),
       };
 
-      // Only upsert task vector if user has labeling experience (per LLM classifier)
-      // Users without labeling experience get task score = 0 during matching
-      const hasLabelingEvidence = classification.hasLabelingExperience;
-
+      // Always upsert both vectors - skills capsule captures ALL professional skills
       await upsertVector(domainVectorId, domainEmbedding, {
         ...userMetadata,
         section: 'domain' as const,
       });
 
-      if (hasLabelingEvidence) {
-        await upsertVector(taskVectorId, taskEmbedding, {
-          ...userMetadata,
-          section: 'task' as const,
-        });
-      }
+      await upsertVector(taskVectorId, taskEmbedding, {
+        ...userMetadata,
+        section: 'task' as const,
+      });
 
       log.info(
         {
           event: 'pinecone.upsert',
           userId: normalized.userId,
           domainVectorId,
-          taskVectorId: hasLabelingEvidence ? taskVectorId : null,
+          taskVectorId,
         },
         'Pinecone upsert completed'
       );
@@ -260,10 +255,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           chars: capsules.domain.text.length,
         },
         task: {
-          vector_id: hasLabelingEvidence ? taskVectorId : null,
+          vector_id: taskVectorId,
           capsule_text: capsules.task.text,
           chars: capsules.task.text.length,
-          ...(hasLabelingEvidence ? {} : { skipped: true }),
         },
         // Classification determines matching behavior
         classification: {

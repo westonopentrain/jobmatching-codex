@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateCapsules, CAPSULE_SYSTEM_MESSAGE, buildCapsulePrompt } from '../src/services/capsules';
 import { NormalizedUserProfile } from '../src/utils/types';
-import { NO_EVIDENCE_TASK_CAPSULE, validateTaskCapsule } from '../src/services/validate';
-import { extractLabelingEvidence } from '../src/utils/evidence';
+import { validateSkillsCapsule } from '../src/services/validate';
 
 interface MockResponse {
   content: string;
@@ -44,19 +43,34 @@ function createProfile(overrides: Partial<NormalizedUserProfile>): NormalizedUse
   };
 }
 
-describe('validateTaskCapsule', () => {
-  it('allows QA sentences paired with annotation evidence', () => {
-    const taskParagraph =
-      'The candidate leads QA reviews of annotation workflows with senior annotators overseeing label quality.\nKeywords: annotation, qa';
-    const result = validateTaskCapsule(taskParagraph, new Set(['annotation', 'qa']));
+describe('validateSkillsCapsule', () => {
+  it('validates skills capsule with keywords', () => {
+    const skillsCapsule =
+      'Medical writing and editorial review. BMJ content editing, e-learning module development, exam question creation.\nKeywords: medical writing, editorial, BMJ, e-learning';
+    const result = validateSkillsCapsule(skillsCapsule);
 
-    expect(result.text).toBe(taskParagraph);
+    expect(result.text).toBe(skillsCapsule);
     expect(result.violations).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('flags missing keywords', () => {
+    const skillsCapsule = 'Medical writing and editorial review. BMJ content editing.';
+    const result = validateSkillsCapsule(skillsCapsule);
+
+    expect(result.violations).toContain('MISSING_KEYWORDS');
+  });
+
+  it('flags too short skills', () => {
+    const skillsCapsule = 'Short.\nKeywords: short';
+    const result = validateSkillsCapsule(skillsCapsule);
+
+    expect(result.violations).toContain('SKILLS_TOO_SHORT');
   });
 });
 
 describe('capsule prompt', () => {
-  it('includes decision tree rules and evidence list for downstream generation', () => {
+  it('includes decision tree rules for domain and skills capsules', () => {
     const profile = createProfile({
       resumeText: 'Frontend engineer working with React and TypeScript.',
       workExperience: ['Built UI components for logistics dashboards.'],
@@ -64,22 +78,14 @@ describe('capsule prompt', () => {
       languages: ['English'],
       country: 'US',
     });
-    const evidenceSource = [
-      profile.resumeText,
-      ...profile.workExperience,
-      ...profile.labelingExperience,
-      profile.languages[0],
-      profile.country ?? '',
-    ].join('\n');
-    const evidence = extractLabelingEvidence(evidenceSource);
-    const prompt = buildCapsulePrompt(profile, evidence);
+    const prompt = buildCapsulePrompt(profile);
 
     expect(prompt).toContain('CRITICAL CONTEXT');
     expect(prompt).toContain('DOMAIN CAPSULE (WHO is this person? 5-20 words)');
-    expect(prompt).toContain('TASK CAPSULE (WHAT AI/data work experience? 10-25 words)');
-    expect(prompt).toContain('EVIDENCE (for Task Capsule only; if empty, use the fixed \'no experience\' line):');
-    expect(prompt).toContain('prompt writing');
-    expect(prompt).toContain('No AI/LLM data-labeling, model training, or evaluation experience documented.');
+    expect(prompt).toContain('SKILLS CAPSULE (WHAT can this person do? 10-30 words)');
+    expect(prompt).toContain('Capture ALL professional skills mentioned in SOURCE');
+    expect(prompt).toContain('medical writing');
+    expect(prompt).toContain('translation');
   });
 });
 
@@ -89,8 +95,8 @@ describe('generateCapsules integration', () => {
     mockCreate.mockClear();
   });
 
-  it('generates domain capsules across multiple domains without AI leakage', async () => {
-    const profiles: Array<{ profile: NormalizedUserProfile; noun: string; domainText: string }> = [
+  it('generates domain and skills capsules across multiple domains', async () => {
+    const profiles: Array<{ profile: NormalizedUserProfile; noun: string; domainText: string; skillsText: string }> = [
       {
         profile: createProfile({
           userId: 'med',
@@ -100,7 +106,9 @@ describe('generateCapsules integration', () => {
         }),
         noun: 'maternal-fetal medicine',
         domainText:
-          'Obstetrics, maternal-fetal medicine, prenatal diagnostics, cesarean delivery planning, postpartum recovery pathways, neonatal care coordination, high-risk pregnancy management, fetal monitoring protocols, obstetric triage standards, perinatal imaging reviews.\nKeywords: obstetrics, maternal-fetal medicine, prenatal diagnostics, cesarean delivery planning, postpartum recovery pathways, neonatal care coordination, high-risk pregnancy management, fetal monitoring protocols, obstetric triage standards, perinatal imaging reviews',
+          'Obstetrics, maternal-fetal medicine, prenatal diagnostics, cesarean delivery planning, postpartum recovery pathways, neonatal care coordination, high-risk pregnancy management.\nKeywords: obstetrics, maternal-fetal medicine, prenatal diagnostics',
+        skillsText:
+          'Medical practice and clinical care. Labor and delivery management, obstetric triage, patient consultation, prenatal monitoring.\nKeywords: clinical care, obstetric triage, prenatal monitoring',
       },
       {
         profile: createProfile({
@@ -111,7 +119,9 @@ describe('generateCapsules integration', () => {
         }),
         noun: 'TypeScript',
         domainText:
-          'TypeScript services, React interfaces, API architecture, CI/CD automation, distributed systems observability, Node.js microservices, frontend frameworks, web performance optimization, design systems, cloud deployment pipelines.\nKeywords: TypeScript services, React interfaces, API architecture, CI/CD automation, distributed systems observability, Node.js microservices, frontend frameworks, web performance optimization, design systems, cloud deployment pipelines',
+          'TypeScript services, React interfaces, API architecture, CI/CD automation, distributed systems observability, Node.js microservices.\nKeywords: TypeScript, React, API, Node.js',
+        skillsText:
+          'Software development and code review. API design, CI/CD pipeline configuration, frontend development, microservices architecture.\nKeywords: software development, API design, CI/CD, frontend',
       },
       {
         profile: createProfile({
@@ -122,7 +132,9 @@ describe('generateCapsules integration', () => {
         }),
         noun: 'nonfiction',
         domainText:
-          'Literary nonfiction, cultural reporting, longform essays, magazine features, narrative structure, editorial strategy, copyediting standards, fact-checking protocols, publication workflows, style guides.\nKeywords: literary nonfiction, cultural reporting, longform essays, magazine features, narrative structure, editorial strategy, copyediting standards, fact-checking protocols, publication workflows, style guides',
+          'Literary nonfiction, cultural reporting, longform essays, magazine features, narrative structure, editorial strategy.\nKeywords: literary nonfiction, cultural reporting, editorial',
+        skillsText:
+          'Writing and editorial review. Longform essay editing, magazine feature development, copyediting, fact-checking.\nKeywords: writing, editorial, editing, copyediting',
       },
       {
         profile: createProfile({
@@ -133,33 +145,39 @@ describe('generateCapsules integration', () => {
         }),
         noun: 'fixed-income',
         domainText:
-          'Fixed-income strategy, municipal bonds, credit analysis, duration hedging, institutional mandates, portfolio optimization, risk management frameworks, derivatives evaluation, compliance standards, financial modeling.\nKeywords: Fixed-income strategy, municipal bonds, credit analysis, duration hedging, institutional mandates, portfolio optimization, risk management frameworks, derivatives evaluation, compliance standards, financial modeling',
+          'Fixed-income strategy, municipal bonds, credit analysis, duration hedging, institutional mandates, portfolio optimization.\nKeywords: fixed-income, municipal bonds, credit analysis',
+        skillsText:
+          'Financial analysis and portfolio management. Credit analysis, bond portfolio construction, risk assessment, financial modeling.\nKeywords: financial analysis, credit analysis, portfolio management',
       },
     ];
 
-    for (const { domainText } of profiles) {
+    for (const { domainText, skillsText } of profiles) {
       mockResponses.push({
-        content: `${domainText}\n\n${NO_EVIDENCE_TASK_CAPSULE}`,
+        content: `${domainText}\n\n${skillsText}`,
         assert: (payload) => {
           expect(payload.input[0].content).toBe(CAPSULE_SYSTEM_MESSAGE);
         },
       });
     }
 
-    for (const { profile, noun } of profiles) {
+    for (const { profile, noun, skillsText } of profiles) {
       const capsules = await generateCapsules(profile);
       expect(capsules.domain.text.toLowerCase()).toContain(noun.toLowerCase());
       expect(capsules.domain.text.toLowerCase()).not.toContain('annotation');
-      expect(capsules.task.text).toBe(NO_EVIDENCE_TASK_CAPSULE);
+      // Skills capsule should be preserved as-is (not replaced with fixed sentence)
+      expect(capsules.task.text).toBe(skillsText);
       expect(capsules.domain.text).toMatch(/Keywords:/);
-      expect(capsules.domain.text.split('\n')[0].length).toBeGreaterThan(0);
+      expect(capsules.task.text).toMatch(/Keywords:/);
     }
   });
 
-  it('forces fixed sentence when LLM outputs task content without evidence', async () => {
+  it('preserves skills capsule content for all users', async () => {
+    const skillsText =
+      'Healthcare operations and scheduling. Perioperative staffing coordination, surgical schedule management, resource allocation.\nKeywords: healthcare operations, scheduling, staffing';
+
     mockResponses.push({
       content:
-        'Domain capsule text about healthcare revenue cycle.\nKeywords: healthcare, revenue cycle\n\nPerformed analytics and documentation for reporting.\nKeywords: analytics, documentation',
+        `Healthcare revenue cycle management, surgical scheduling, perioperative coordination.\nKeywords: healthcare, revenue cycle, surgical\n\n${skillsText}`,
     });
 
     const profile = createProfile({
@@ -169,15 +187,17 @@ describe('generateCapsules integration', () => {
     });
 
     const capsules = await generateCapsules(profile);
-    expect(capsules.task.text).toBe(NO_EVIDENCE_TASK_CAPSULE);
+    // Skills capsule should be preserved - captures all professional skills
+    expect(capsules.task.text).toBe(skillsText);
+    expect(capsules.task.text).toContain('Healthcare operations');
   });
 
-  it('preserves valid task capsule for code annotation evidence', async () => {
-    const taskParagraph =
-      'The candidate leads UI screenshot annotation with bounding boxes in Label Studio, delivering HTML/CSS/JS interface tagging, code diff classification, and prompt writing for SFT response libraries.\nKeywords: bounding box, label studio, html/css/js code, prompt writing, sft';
+  it('preserves skills capsule for code annotation and labeling evidence', async () => {
+    const skillsText =
+      'UI annotation and code review. Screenshot annotation with bounding boxes in Label Studio, HTML/CSS/JS interface tagging, code diff classification, prompt writing for SFT.\nKeywords: annotation, bounding box, label studio, code review, prompt writing';
 
     mockResponses.push({
-      content: `Domain capsule for frontend tooling.\nKeywords: frontend, tooling\n\n${taskParagraph}`,
+      content: `Frontend engineering and design systems.\nKeywords: frontend, design systems\n\n${skillsText}`,
     });
 
     const profile = createProfile({
@@ -191,36 +211,17 @@ describe('generateCapsules integration', () => {
     });
 
     const capsules = await generateCapsules(profile);
-    expect(capsules.task.text).toBe(taskParagraph);
-
-    const keywordsLine = taskParagraph.split('\n').pop() ?? '';
-    const keywords = keywordsLine
-      .replace('Keywords:', '')
-      .split(',')
-      .map((k) => k.trim())
-      .filter(Boolean);
-    const evidence = extractLabelingEvidence(
-      [
-        profile.resumeText,
-        ...profile.workExperience,
-        ...profile.labelingExperience,
-        profile.languages.join('\n'),
-        profile.country ?? '',
-      ].join('\n')
-    );
-    const evidenceSet = new Set([...evidence.tokens, ...evidence.phrases]);
-    const missing = keywords.filter(
-      (keyword) => !evidenceSet.has(keyword.toLowerCase())
-    );
-    expect(missing).toEqual([]);
+    expect(capsules.task.text).toBe(skillsText);
+    expect(capsules.task.text).toContain('annotation');
+    expect(capsules.task.text).toContain('Label Studio');
   });
 
-  it('allows writing-focused task capsule with explicit prompt evidence', async () => {
-    const taskParagraph =
-      'The candidate executes prompt writing and response rating for conversational LLM systems, managing pairwise comparisons for RLHF and summarization annotation on news briefs.\nKeywords: prompt writing, response rating, pairwise comparisons, rlhf, summarization';
+  it('captures writing and RLHF skills in skills capsule', async () => {
+    const skillsText =
+      'Content editing and LLM evaluation. Prompt writing, response rating for conversational systems, pairwise comparisons for RLHF, summarization annotation.\nKeywords: prompt writing, response rating, RLHF, summarization, content editing';
 
     mockResponses.push({
-      content: `Domain capsule for editorial leadership.\nKeywords: editorial, leadership\n\n${taskParagraph}`,
+      content: `Editorial leadership and content strategy.\nKeywords: editorial, content strategy\n\n${skillsText}`,
     });
 
     const profile = createProfile({
@@ -232,6 +233,8 @@ describe('generateCapsules integration', () => {
     });
 
     const capsules = await generateCapsules(profile);
-    expect(capsules.task.text).toBe(taskParagraph);
+    expect(capsules.task.text).toBe(skillsText);
+    expect(capsules.task.text).toContain('RLHF');
+    expect(capsules.task.text).toContain('prompt writing');
   });
 });

@@ -510,3 +510,33 @@ export function validateTaskCapsule(
 
   return { ok: true, violations: [], text: trimmed };
 }
+
+export interface SkillsCapsuleValidationResult {
+  ok: boolean;
+  violations: string[];
+  text: string;
+}
+
+/**
+ * Validates a skills capsule - lighter validation than task capsule.
+ * We want to capture ALL professional skills, so we don't enforce evidence checking.
+ */
+export function validateSkillsCapsule(skillsText: string): SkillsCapsuleValidationResult {
+  const trimmed = skillsText.trim();
+  const violations: string[] = [];
+
+  // Check for Keywords line
+  const keywords = extractKeywords(trimmed);
+  if (keywords.length === 0) {
+    violations.push('MISSING_KEYWORDS');
+  }
+
+  // Check minimum content
+  const body = removeKeywordsLine(trimmed);
+  if (body.length < 10) {
+    violations.push('SKILLS_TOO_SHORT');
+  }
+
+  // Return the capsule as-is (don't replace with fixed sentence)
+  return { ok: violations.length === 0, violations, text: trimmed };
+}
