@@ -58,6 +58,14 @@ RULES:
 - Use ONLY facts explicitly stated in SOURCE. Do NOT infer or embellish.
 - Do NOT include: AI/LLM terms, dates, employers, years of experience, soft skills.
 - Output MUST be 5-20 words total (not counting keywords).
+- IMPORTANT: Always append native language(s) at the END of the domain capsule.
+  Look for "Native or Bilingual" proficiency in the Languages field.
+  Format: "[Domain capsule]. Native: [Language1, Language2]."
+  Examples:
+    - "Angular developer. JavaScript, TypeScript. Native: Hindi."
+    - "OBGYN physician. Obstetrics and gynecology. Native: English, Spanish."
+    - "IT technician. Windows, VMware. Native: Slovak."
+    - "General workforce. Native: French."
 - End with: Keywords: <3-8 key domain nouns>
 
 ## SKILLS CAPSULE (WHAT can this person do? 10-30 words)

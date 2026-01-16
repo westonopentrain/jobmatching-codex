@@ -29,11 +29,17 @@ export interface JobClassificationResult {
 const CLASSIFICATION_SYSTEM_MESSAGE = `You are a job classification system for an AI training marketplace. Your task is to analyze job postings and classify them.
 
 CLASSIFICATION RULES:
-1. "specialized" jobs require specific domain expertise, professional credentials, or advanced degrees (e.g., MD, PhD, JD, PE). Examples: medical doctors reviewing health content, attorneys reviewing legal documents, engineers evaluating technical solutions.
+1. "specialized" jobs require specific domain expertise, professional credentials, or advanced degrees (e.g., MD, PhD, JD, PE). Examples: medical doctors reviewing health content, attorneys reviewing legal documents, engineers evaluating technical solutions, Angular/React developers for code review.
 
 2. "generic" jobs are basic data labeling tasks that anyone with basic skills can do. Examples: bounding box annotation, simple transcription, image tagging, basic classification.
 
-IMPORTANT: If a job requires professional credentials (MD, PhD, JD, PE, CPA, etc.) or years of specialized experience, it is ALWAYS "specialized".
+3. IMPORTANT - Language-specific annotation jobs: If a job's main requirement is speaking a specific language (e.g., Slovak, Hindi, French) for annotation, labeling, transcription, or content review tasks, classify it as "generic" NOT "specialized". The language filtering is handled externally - we only need to match on skills. Examples:
+   - "Slovak Video Annotator" → generic (anyone who speaks Slovak can annotate)
+   - "Hindi Transcription Reviewer" → generic (language skill, not professional expertise)
+   - "French Content Moderator" → generic (language skill, not professional expertise)
+   Exception: Professional translation/localization jobs requiring translation expertise are still "specialized".
+
+IMPORTANT: If a job requires professional credentials (MD, PhD, JD, PE, CPA, etc.) or years of specialized experience in a professional field, it is ALWAYS "specialized".
 
 Return ONLY valid JSON in this exact format:
 {
@@ -239,10 +245,16 @@ function fallbackClassification(job: NormalizedJobPosting): JobClassificationRes
   const hasEntryLevel = /\b(entry level|beginner|no experience|any level)\b/i.test(text);
   const hasGenericTask = /\b(annotator|labeler|rater|evaluator|transcriber)\b/i.test(text) && !hasCredentials;
 
+  // Language-specific annotation jobs should be generic (language filter handled by Bubble)
+  // Detect: non-English language + annotation/labeling/transcription task
+  const nonEnglishLanguages = /\b(slovak|hindi|french|german|spanish|portuguese|italian|chinese|japanese|korean|arabic|russian|polish|czech|hungarian|dutch|swedish|norwegian|danish|finnish|turkish|greek|hebrew|thai|vietnamese|indonesian|malay|tagalog|bengali|urdu|tamil|telugu|marathi|gujarati)\b/i;
+  const annotationTasks = /\b(annotator|annotation|labeler|labeling|transcriber|transcription|content review|video review|audio review|data entry|moderator)\b/i;
+  const hasLanguageAnnotationJob = nonEnglishLanguages.test(text) && annotationTasks.test(text) && !hasCredentials;
+
   // Hard requirements (credentials + professional titles) ALWAYS override generic signals
   const hasHardRequirements = hasCredentials || hasProfessionalTitle;
   const hasSoftSpecialized = hasMedicalContext || hasLegalContext;
-  const isGeneric = hasGenericLabels || hasEntryLevel || hasGenericTask;
+  const isGeneric = hasGenericLabels || hasEntryLevel || hasGenericTask || hasLanguageAnnotationJob;
 
   // Classification logic:
   // 1. Hard requirements (credentials, professional titles) -> always specialized
