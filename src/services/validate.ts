@@ -4,7 +4,7 @@ import { logger } from '../utils/logger';
 import { createTextResponse } from './openai-responses';
 
 const FIXED_SENTENCE =
-  'No AI/LLM data-labeling, model training, or evaluation experience was provided in the source.';
+  'No AI/LLM data-labeling, model training, or evaluation experience documented.';
 const FIXED_KEYWORDS = 'Keywords: none';
 export const NO_EVIDENCE_TASK_CAPSULE = `${FIXED_SENTENCE}\n${FIXED_KEYWORDS}`;
 

@@ -5,6 +5,7 @@ import { buildServer } from '../src/server';
 import { generateCapsules } from '../src/services/capsules';
 import { embedText } from '../src/services/embeddings';
 import { upsertVector } from '../src/services/pinecone';
+import { classifyUser } from '../src/services/user-classifier';
 
 vi.mock('../src/services/capsules', () => ({
   generateCapsules: vi.fn(),
@@ -20,8 +21,13 @@ vi.mock('../src/services/pinecone', () => ({
   upsertVector: vi.fn(),
 }));
 
+vi.mock('../src/services/user-classifier', () => ({
+  classifyUser: vi.fn(),
+}));
+
 const mockGenerateCapsules = generateCapsules as unknown as Mock;
 const mockEmbedText = embedText as unknown as Mock;
+const mockClassifyUser = classifyUser as unknown as Mock;
 const mockUpsertVector = upsertVector as unknown as Mock;
 
 describe('POST /v1/users/upsert', () => {
@@ -32,6 +38,16 @@ describe('POST /v1/users/upsert', () => {
     mockGenerateCapsules.mockResolvedValue({
       domain: { text: 'domain capsule' },
       task: { text: 'task capsule' },
+    });
+
+    mockClassifyUser.mockResolvedValue({
+      expertiseTier: 'entry',
+      credentials: [],
+      subjectMatterCodes: [],
+      yearsExperience: 0,
+      hasLabelingExperience: false,
+      confidence: 0.5,
+      reasoning: 'test classification',
     });
 
     const fakeVector = Array.from({ length: 1536 }, () => 0.1);
