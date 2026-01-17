@@ -3,13 +3,13 @@ import { z } from 'zod';
 
 import { AppError, toErrorResponse } from '../utils/errors';
 import { ensureAuthorized } from '../utils/auth';
-import { requireEnv } from '../utils/env';
+import { getEnv, requireEnv } from '../utils/env';
 import { EMBEDDING_DIMENSION, EMBEDDING_MODEL, embedText } from '../services/embeddings';
-import { upsertVector, deleteVectors } from '../services/pinecone';
+import { upsertVector, deleteVectors, fetchVectors, queryUsersByFilter, queryByVector } from '../services/pinecone';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
-import { classifyJob } from '../services/job-classifier';
+import { classifyJob, getWeightProfile, JobClass } from '../services/job-classifier';
 import { auditJobUpsert } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
 
@@ -35,6 +35,53 @@ const jobUpsertSchema = z.object({
   title: z.string().optional(),
   fields: fieldSchema,
 });
+
+// Schema for /v1/jobs/notify - find users to notify about a new job
+const jobNotifySchema = z.object({
+  job_id: z.string().min(1),
+  title: z.string().optional(),
+  fields: fieldSchema,
+  // Country/language filters - users must match at least one of each
+  available_countries: z.array(z.string()).optional(),
+  available_languages: z.array(z.string()).optional(),
+  // Safety cap - max number of users to notify even if more qualify
+  max_notifications: z.number().int().positive().max(10000).default(500),
+});
+
+// Constants for notify scoring
+const NOTIFY_TOPK = 10000;
+const FILTER_CHUNK_SIZE = 500;
+const MIN_THRESHOLD_SPECIALIZED = 0.50;
+const MIN_THRESHOLD_GENERIC = 0.35;
+
+// Tier-based threshold multipliers for generic jobs
+const TIER_THRESHOLD_MULTIPLIERS: Record<string, number> = {
+  'specialist': 1.3,
+  'expert': 1.15,
+  'intermediate': 1.0,
+  'entry': 1.0,
+};
+
+function getTierAdjustedMinThreshold(
+  userTier: string | undefined,
+  jobClass: JobClass
+): number {
+  const baseMin = jobClass === 'specialized' ? MIN_THRESHOLD_SPECIALIZED : MIN_THRESHOLD_GENERIC;
+  const multiplier = TIER_THRESHOLD_MULTIPLIERS[userTier ?? 'entry'] ?? 1.0;
+  return jobClass === 'generic' ? baseMin * multiplier : baseMin;
+}
+
+function isValidVector(values: number[] | undefined): values is number[] {
+  return Array.isArray(values) && values.length === EMBEDDING_DIMENSION;
+}
+
+function chunkArray<T>(items: readonly T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
 
 export const jobRoutes: FastifyPluginAsync = async (fastify) => {
   const serviceApiKey = requireEnv('SERVICE_API_KEY');
@@ -274,6 +321,269 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       log.error({ err: error }, 'Unexpected error during job delete');
       const appError = new AppError({
         code: 'JOB_DELETE_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // NOTIFY endpoint - find users to notify about a new job
+  // This is the main entry point for Bubble to trigger job notifications
+  fastify.post('/v1/jobs/notify', async (request, reply) => {
+    const requestId = request.id as string;
+    const log = request.log.child({ route: 'jobs.notify', requestId });
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const parsed = jobNotifySchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Invalid request body',
+          details: { issues: parsed.error.issues },
+        });
+      }
+
+      const { job_id, available_countries, available_languages, max_notifications } = parsed.data;
+
+      // Step 1: Upsert the job (same logic as /v1/jobs/upsert)
+      const rawFields = parsed.data.fields;
+      const fieldEntries = Object.entries(rawFields).filter(([, value]) => value !== undefined) as Array<[
+        keyof JobFields,
+        JobFields[keyof JobFields],
+      ]>;
+      const fields = Object.fromEntries(fieldEntries) as JobFields;
+
+      const upsertRequest: UpsertJobRequest = {
+        job_id: parsed.data.job_id,
+        fields,
+      };
+
+      if (parsed.data.title !== undefined) {
+        upsertRequest.title = parsed.data.title;
+      }
+
+      const normalized = normalizeJobRequest(upsertRequest);
+      const capsules = await generateJobCapsules(normalized);
+      const classification = await classifyJob(normalized);
+
+      log.info(
+        {
+          event: 'notify.job_processed',
+          jobId: normalized.jobId,
+          jobClass: classification.jobClass,
+        },
+        'Job processed for notification'
+      );
+
+      const domainVectorId = `job_${normalized.jobId}::domain`;
+      const taskVectorId = `job_${normalized.jobId}::task`;
+
+      const [domainEmbedding, taskEmbedding] = await Promise.all([
+        embedText(capsules.domain.text),
+        embedText(capsules.task.text),
+      ]);
+
+      const jobMetadata = {
+        job_id: normalized.jobId,
+        model: EMBEDDING_MODEL,
+        type: 'job' as const,
+        job_class: classification.jobClass,
+        required_credentials: classification.requirements.credentials,
+        subject_matter_codes: classification.requirements.subjectMatterCodes,
+        required_experience_years: classification.requirements.minimumExperienceYears,
+        expertise_tier: classification.requirements.expertiseTier,
+        countries: classification.requirements.countries,
+        languages: classification.requirements.languages,
+      };
+
+      await Promise.all([
+        upsertVector(domainVectorId, domainEmbedding, { ...jobMetadata, section: 'domain' as const }),
+        upsertVector(taskVectorId, taskEmbedding, { ...jobMetadata, section: 'task' as const }),
+      ]);
+
+      // Audit job upsert (non-blocking)
+      auditJobUpsert({
+        jobId: normalized.jobId,
+        requestId,
+        title: normalized.title,
+        rawInput: normalized as unknown as Record<string, unknown>,
+        domainCapsule: capsules.domain.text,
+        domainKeywords: capsules.domain.keywords ?? [],
+        taskCapsule: capsules.task.text,
+        taskKeywords: capsules.task.keywords ?? [],
+        classification,
+      });
+
+      // Step 2: Query users matching country/language filters
+      const usersNamespace = getEnv('PINECONE_USERS_NAMESPACE');
+
+      // Query users by domain similarity with metadata filters
+      const filterOptions: Parameters<typeof queryUsersByFilter>[0] = {
+        jobVector: domainEmbedding,
+        topK: NOTIFY_TOPK,
+      };
+      if (available_countries) filterOptions.countries = available_countries;
+      if (available_languages) filterOptions.languages = available_languages;
+      if (usersNamespace) filterOptions.namespace = usersNamespace;
+
+      const domainMatches = await queryUsersByFilter(filterOptions);
+
+      log.info(
+        {
+          event: 'notify.users_queried',
+          jobId: job_id,
+          matchCount: domainMatches.length,
+          countries: available_countries,
+          languages: available_languages,
+        },
+        'Queried users matching filters'
+      );
+
+      if (domainMatches.length === 0) {
+        const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+        return reply.status(200).send({
+          status: 'ok',
+          job_id,
+          job_class: classification.jobClass,
+          notify_user_ids: [],
+          total_candidates: 0,
+          total_above_threshold: 0,
+          threshold_used: classification.jobClass === 'specialized' ? MIN_THRESHOLD_SPECIALIZED : MIN_THRESHOLD_GENERIC,
+          elapsed_ms: Math.round(elapsedMs),
+        });
+      }
+
+      // Step 3: Get task scores for the matched users
+      // We already have domain scores from the filter query
+      const userIds = domainMatches.map((m) => m.userId);
+      const domainScoreMap = new Map(domainMatches.map((m) => [m.userId, m.score]));
+      const userMetadataMap = new Map(domainMatches.map((m) => [m.userId, m.metadata]));
+
+      // Query task scores in chunks
+      const taskScoreMap = new Map<string, number>();
+      const userChunks = chunkArray(userIds, FILTER_CHUNK_SIZE);
+
+      for (const chunk of userChunks) {
+        const queryOptions: Parameters<typeof queryByVector>[0] = {
+          values: taskEmbedding,
+          topK: chunk.length,
+          filter: {
+            type: 'user',
+            section: 'task',
+            user_id: { $in: chunk },
+          },
+        };
+        if (usersNamespace) queryOptions.namespace = usersNamespace;
+
+        const taskMatches = await queryByVector(queryOptions);
+
+        for (const match of taskMatches) {
+          const metadata = match.metadata as Record<string, unknown> | undefined;
+          const userId = metadata?.user_id as string | undefined;
+          if (userId) {
+            taskScoreMap.set(userId, match.score);
+          }
+        }
+      }
+
+      // Step 4: Calculate final scores and apply thresholds
+      const weights = getWeightProfile(classification.jobClass);
+      const scoredUsers: Array<{
+        userId: string;
+        domainScore: number;
+        taskScore: number;
+        finalScore: number;
+        expertiseTier: string | undefined;
+        threshold: number;
+        aboveThreshold: boolean;
+      }> = [];
+
+      for (const userId of userIds) {
+        const domainScore = domainScoreMap.get(userId) ?? 0;
+        const taskScore = taskScoreMap.get(userId) ?? 0;
+        const finalScore = weights.w_domain * domainScore + weights.w_task * taskScore;
+
+        // Get user's expertise tier from metadata
+        const metadata = userMetadataMap.get(userId) as Record<string, unknown> | undefined;
+        const expertiseTier = metadata?.expertise_tier as string | undefined;
+
+        // Calculate tier-adjusted threshold
+        const threshold = getTierAdjustedMinThreshold(expertiseTier, classification.jobClass);
+        const aboveThreshold = finalScore >= threshold;
+
+        scoredUsers.push({
+          userId,
+          domainScore,
+          taskScore,
+          finalScore,
+          expertiseTier,
+          threshold,
+          aboveThreshold,
+        });
+      }
+
+      // Sort by final score descending
+      scoredUsers.sort((a, b) => b.finalScore - a.finalScore);
+
+      // Filter to users above their threshold
+      const qualifiedUsers = scoredUsers.filter((u) => u.aboveThreshold);
+
+      // Apply safety cap
+      const notifyUsers = qualifiedUsers.slice(0, max_notifications);
+
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Math.round(elapsedMs);
+
+      log.info(
+        {
+          event: 'notify.complete',
+          jobId: job_id,
+          jobClass: classification.jobClass,
+          totalCandidates: userIds.length,
+          totalAboveThreshold: qualifiedUsers.length,
+          notifyCount: notifyUsers.length,
+          maxNotifications: max_notifications,
+          elapsedMs: elapsedRounded,
+        },
+        'Job notification processing complete'
+      );
+
+      return reply.status(200).send({
+        status: 'ok',
+        job_id,
+        job_class: classification.jobClass,
+        notify_user_ids: notifyUsers.map((u) => u.userId),
+        total_candidates: userIds.length,
+        total_above_threshold: qualifiedUsers.length,
+        // Include score distribution for debugging
+        score_stats: {
+          min: scoredUsers.length > 0 ? Math.round(scoredUsers[scoredUsers.length - 1]!.finalScore * 100) / 100 : null,
+          max: scoredUsers.length > 0 ? Math.round(scoredUsers[0]!.finalScore * 100) / 100 : null,
+          threshold_specialized: MIN_THRESHOLD_SPECIALIZED,
+          threshold_generic: MIN_THRESHOLD_GENERIC,
+        },
+        elapsed_ms: elapsedRounded,
+      });
+    } catch (error) {
+      const errorElapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const errorElapsedRounded = Math.round(errorElapsedMs);
+
+      if (error instanceof AppError) {
+        log.warn(
+          { error: error.message, code: error.code, details: error.details, event: 'jobs.notify.error', elapsedMs: errorElapsedRounded },
+          'Handled job notify error'
+        );
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error, event: 'jobs.notify.error', elapsedMs: errorElapsedRounded }, 'Unexpected error during job notify');
+      const appError = new AppError({
+        code: 'JOB_NOTIFY_FAILURE',
         statusCode: 500,
         message: 'Unexpected server error',
       });

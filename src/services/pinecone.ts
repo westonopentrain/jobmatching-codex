@@ -178,3 +178,90 @@ export async function queryByVector(options: QueryOptions): Promise<QueryMatch[]
     return mapped;
   });
 }
+
+/**
+ * Query all users matching metadata filters (country, languages).
+ * Used by /v1/jobs/notify to find ALL users in specific countries/languages.
+ * Returns user IDs and their similarity scores to the job vector.
+ */
+export interface UserFilterOptions {
+  jobVector: number[];
+  countries?: string[];
+  languages?: string[];
+  topK?: number;
+  namespace?: string;
+}
+
+export interface FilteredUserMatch {
+  userId: string;
+  score: number;
+  metadata?: VectorMetadata;
+}
+
+export async function queryUsersByFilter(options: UserFilterOptions): Promise<FilteredUserMatch[]> {
+  const { jobVector, countries, languages, topK = 10000, namespace } = options;
+  const index = getIndex();
+
+  // Build metadata filter
+  // type='user', section='domain', plus country and language filters
+  const filter: Record<string, unknown> = {
+    type: 'user',
+    section: 'domain',
+  };
+
+  // Country filter: match if user's country is in the list
+  // Handle "Global" specially - if "Global" is in available_countries, include users with any country
+  if (countries && countries.length > 0) {
+    const hasGlobal = countries.some(c => c.toLowerCase() === 'global' || c === 'Global - Any Location');
+    if (!hasGlobal) {
+      // Only filter by country if not global
+      filter.country = { $in: countries };
+    }
+    // If hasGlobal, don't add country filter - accept all countries
+  }
+
+  // Language filter: match if user's languages array has any overlap with available_languages
+  if (languages && languages.length > 0) {
+    filter.languages = { $in: languages };
+  }
+
+  const queryRequest: Record<string, unknown> = {
+    vector: jobVector,
+    topK,
+    includeMetadata: true,
+    filter,
+  };
+
+  if (namespace) {
+    queryRequest.namespace = namespace;
+  }
+
+  const response = await withRetry(() =>
+    index.query(queryRequest as Parameters<Index<VectorMetadata>['query']>[0])
+  ).catch((error) => {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError({
+      code: 'PINECONE_QUERY_FAILURE',
+      statusCode: 502,
+      message: 'Failed to query users by filter',
+      details: { message: (error as Error).message },
+    });
+  });
+
+  const results: FilteredUserMatch[] = [];
+  for (const match of response.matches ?? []) {
+    const metadata = match.metadata as Record<string, unknown> | undefined;
+    const userId = metadata?.user_id as string | undefined;
+    if (userId) {
+      results.push({
+        userId,
+        score: match.score ?? 0,
+        metadata: metadata as VectorMetadata,
+      });
+    }
+  }
+
+  return results;
+}
