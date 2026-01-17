@@ -14,6 +14,54 @@ import { auditJobUpsert, auditJobNotify } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
 import { logger } from '../utils/logger';
 
+// Specialty synonyms for semantic matching of subject matter codes
+// Maps specialty (after the colon) to equivalent terms
+const SPECIALTY_SYNONYMS: Record<string, string[]> = {
+  'asr': ['speech-recognition', 'speech_recognition', 'audio-transcription'],
+  'speech-recognition': ['asr', 'speech_recognition', 'audio-transcription'],
+  'audio-transcription': ['asr', 'speech-recognition', 'speech_recognition'],
+  'phonetics': ['phonetic', 'linguistics'],
+  'phonetic': ['phonetics', 'linguistics'],
+  'linguistics': ['phonetics', 'phonetic', 'transcription'],
+  'transcription': ['linguistics'],
+  'obgyn': ['gynecology', 'obstetrics'],
+  'gynecology': ['obgyn', 'obstetrics'],
+  'obstetrics': ['obgyn', 'gynecology'],
+};
+
+/**
+ * Check if two specialties match semantically.
+ * Matches on:
+ * 1. Exact match (case-insensitive)
+ * 2. Substring match (e.g., "phonetics" matches "phonetic")
+ * 3. Synonym match (e.g., "asr" matches "speech-recognition")
+ */
+function specialtiesMatch(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  const aLower = a.toLowerCase();
+  const bLower = b.toLowerCase();
+
+  // Exact match
+  if (aLower === bLower) return true;
+
+  // Substring match (phonetics matches phonetic)
+  if (aLower.includes(bLower) || bLower.includes(aLower)) return true;
+
+  // Synonym match
+  return SPECIALTY_SYNONYMS[aLower]?.includes(bLower) ?? false;
+}
+
+/**
+ * Check if a user's subject matter code matches a job's required code.
+ * Compares the specialty portion (after the colon) semantically,
+ * allowing for domain flexibility (e.g., science:phonetics matches language:phonetics).
+ */
+function codesMatch(userCode: string, jobCode: string): boolean {
+  const userSpecialty = userCode.split(':')[1];
+  const jobSpecialty = jobCode.split(':')[1];
+  return specialtiesMatch(userSpecialty, jobSpecialty);
+}
+
 const fieldSchema = z.object({
   Instructions: z.string().optional(),
   Workload_Desc: z.string().optional(),
@@ -569,8 +617,10 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         qualifiedUsers = qualifiedUsers.filter((u) => {
           const metadata = userMetadataMap.get(u.userId) as Record<string, unknown> | undefined;
           const userCodes = (metadata?.subject_matter_codes as string[]) ?? [];
-          // User must have at least ONE matching code
-          const hasMatchingCode = userCodes.some((code) => jobCodesSet.has(code));
+          // User must have at least ONE matching code (semantic matching by specialty)
+          const hasMatchingCode = userCodes.some((userCode) =>
+            Array.from(jobCodesSet).some((jobCode) => codesMatch(userCode, jobCode))
+          );
           if (!hasMatchingCode) {
             subjectMatterFilteredUserIds.add(u.userId);
           }
