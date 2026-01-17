@@ -380,3 +380,112 @@ Use the URL as the base endpoint for Bubble, Postman, or curl smoke tests. The S
 - `w_domain`, `w_task`: Normalized weights used
 - `weights_source`: `"auto"` or `"request"`
 - `missing_vectors`: Users without embeddings
+- `suggested_threshold`: `{ value, method, min_threshold, percentile_threshold, count_gte_suggested }`
+
+### Score jobs for user
+
+| Property | Value |
+| -------- | ----- |
+| Name | `Score jobs for user` |
+| Use as | Action |
+| Data type | JSON |
+| Method | POST |
+| URL | `https://user-capsule-upsert-service.onrender.com/v1/match/score_jobs_for_user` |
+| Body type | JSON |
+
+**Body template:**
+```json
+{
+  "user_id": "<user_id>",
+  "job_ids": [<job_ids_json>],
+  "auto_weights": true
+}
+```
+
+**Body parameters:**
+| Key | Description | Allow blank |
+| --- | ----------- | ----------- |
+| `user_id` | User's unique id | No |
+| `job_ids_json` | Comma-separated quoted job IDs: `"id1", "id2"` | No |
+
+**Response includes:**
+- `results[]`: Array of `{ job_id, job_class, s_domain, s_task, final, rank }`
+- `suggested_threshold`: `{ value, method, min_threshold, percentile_threshold, count_gte_suggested }`
+- `missing_jobs`: Job IDs without embeddings
+
+---
+
+## Get Recommended Jobs Workflow
+
+### get_recommended_jobs_for_user
+
+**Backend Workflow**: `get_recommended_jobs_for_user`
+- Endpoint name: `get_recommended_jobs_for_user`
+- Ignores privacy rules: Yes
+- Response type: JSON Object
+
+**Parameters:**
+| Key | Type | List | Description |
+| --- | ---- | ---- | ----------- |
+| `user` | User | No | The user to find jobs for |
+| `jobs` | Job | Yes | List of open jobs to score against |
+
+**Step 1: Render - Job Matching - Score jobs for user**
+- Action: "Render - Job Matching - Score jobs for user"
+- `user_id` = user's unique id
+- `job_ids_json` = jobs:format as text
+  - Content to show per list item: `"This Job's unique id"`
+  - Delimiter: `,`
+
+**Step 2: Make changes to User**
+- Thing to change: user
+- `lblr_recommended_jobs` set list = Search for Jobs:
+  - Type: Job
+  - Constraint: `unique id` is in `Result of step 1 (Render - Job Matching...)'s results:filtered's job_id`
+  - Filter on results: `final >= Result of step 1's suggested_threshold value`
+
+---
+
+## Additional User Fields for Job Matching
+
+| Field name              | Type | Description |
+| ----------------------- | ---- | ----------- |
+| `lblr_recommended_jobs` | List of Jobs | Jobs recommended for this user based on matching scores. Updated by `get_recommended_jobs_for_user` workflow. |
+
+---
+
+## Testing the Job Recommendations Workflow
+
+Before wiring `get_recommended_jobs_for_user` to auto-trigger, create a test button to manually verify it works.
+
+### Test Button Setup
+
+1. **Page:** Admin or testing page
+
+2. **Add a Dropdown** to select a user:
+   - Type of choices: User
+   - Choices source: Search for Users where `capsule.domain.vectorID is not empty`
+   - (This filters to only users who have been upserted)
+
+3. **Add a Button** labeled "Test Get Recommended Jobs"
+
+4. **Button Workflow:**
+   - **When:** Button is clicked
+   - **Action:** Schedule API workflow
+   - **API Workflow:** `get_recommended_jobs_for_user`
+   - **user:** Dropdown's value
+   - **jobs:** Search for Jobs where `capsule_domain_vectorID is not empty`
+   - (This filters to only jobs that have been upserted)
+
+### Verification
+
+After clicking the button:
+1. Open the selected User in the database
+2. Check the `lblr_recommended_jobs` field
+3. It should contain jobs that scored above the auto-calculated threshold
+
+### Production Trigger (After Testing)
+
+Once testing confirms the workflow works correctly:
+- Wire `get_recommended_jobs_for_user` to trigger after `upsert-capsules-user` completes
+- Or schedule it to run periodically for active users

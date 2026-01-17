@@ -72,6 +72,33 @@ export interface MatchRequestAuditData {
   }> | undefined;
 }
 
+export interface UserMatchRequestAuditData {
+  userId: string;
+  requestId?: string | undefined;
+  jobCount?: number | undefined;
+  weightsSource?: 'auto' | 'request' | undefined;
+  thresholdUsed?: number | undefined;
+  topKUsed?: number | undefined;
+  resultsReturned?: number | undefined;
+  countGteThreshold?: number | undefined;
+  missingDomainVectors?: number | undefined;
+  missingTaskVectors?: number | undefined;
+  userExpertiseTier?: string | undefined;
+  suggestedThreshold?: number | undefined;
+  suggestedThresholdMethod?: string | undefined;
+  elapsedMs?: number | undefined;
+  results?: Array<{
+    jobId: string;
+    jobClass: string | null;
+    wDomain: number | null;
+    wTask: number | null;
+    sDomain: number | null;
+    sTask: number | null;
+    finalScore: number;
+    rank: number;
+  }> | undefined;
+}
+
 /**
  * Log a job upsert to the audit trail (non-blocking)
  */
@@ -230,6 +257,75 @@ export function auditMatchRequest(data: MatchRequestAuditData): void {
       logger.error(
         { event: 'audit.match_request.error', jobId: data.jobId, error },
         'Failed to save match request audit record'
+      );
+    }
+  })();
+}
+
+/**
+ * Log a user match request (score_jobs_for_user) to the audit trail (non-blocking)
+ */
+export function auditUserMatchRequest(data: UserMatchRequestAuditData): void {
+  if (!isDatabaseAvailable()) {
+    return;
+  }
+
+  // Fire and forget
+  (async () => {
+    try {
+      const db = getDb();
+      if (!db) return;
+
+      // Create the user match request record
+      const matchRequest = await db.auditUserMatchRequest.create({
+        data: {
+          userId: data.userId,
+          requestId: data.requestId ?? null,
+          jobCount: data.jobCount ?? null,
+          weightsSource: data.weightsSource ?? null,
+          thresholdUsed: data.thresholdUsed ?? null,
+          topKUsed: data.topKUsed ?? null,
+          resultsReturned: data.resultsReturned ?? null,
+          countGteThreshold: data.countGteThreshold ?? null,
+          missingDomainVectors: data.missingDomainVectors ?? null,
+          missingTaskVectors: data.missingTaskVectors ?? null,
+          userExpertiseTier: data.userExpertiseTier ?? null,
+          suggestedThreshold: data.suggestedThreshold ?? null,
+          suggestedThresholdMethod: data.suggestedThresholdMethod ?? null,
+          elapsedMs: data.elapsedMs ?? null,
+        },
+      });
+
+      // Create result records if provided
+      if (data.results && data.results.length > 0) {
+        await db.auditUserMatchResult.createMany({
+          data: data.results.map((r) => ({
+            matchRequestId: matchRequest.id,
+            jobId: r.jobId,
+            jobClass: r.jobClass,
+            wDomain: r.wDomain,
+            wTask: r.wTask,
+            sDomain: r.sDomain,
+            sTask: r.sTask,
+            finalScore: r.finalScore,
+            rank: r.rank,
+          })),
+        });
+      }
+
+      logger.debug(
+        {
+          event: 'audit.user_match_request.saved',
+          userId: data.userId,
+          matchRequestId: matchRequest.id,
+          resultsCount: data.results?.length ?? 0,
+        },
+        'User match request audit record saved'
+      );
+    } catch (error) {
+      logger.error(
+        { event: 'audit.user_match_request.error', userId: data.userId, error },
+        'Failed to save user match request audit record'
       );
     }
   })();

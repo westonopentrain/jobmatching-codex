@@ -351,19 +351,22 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
     if (!db) return { error: 'Database not available' };
 
-    const [jobCount, userCount, matchCount, resultCount] = await Promise.all([
+    const [jobCount, userCount, matchCount, resultCount, recCount, recResultCount] = await Promise.all([
       db.auditJobUpsert.count(),
       db.auditUserUpsert.count(),
       db.auditMatchRequest.count(),
       db.auditMatchResult.count(),
+      db.auditUserMatchRequest.count(),
+      db.auditUserMatchResult.count(),
     ]);
 
     // Get counts from last 24 hours
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const [jobsLast24h, usersLast24h, matchesLast24h] = await Promise.all([
+    const [jobsLast24h, usersLast24h, matchesLast24h, recsLast24h] = await Promise.all([
       db.auditJobUpsert.count({ where: { createdAt: { gte: since } } }),
       db.auditUserUpsert.count({ where: { createdAt: { gte: since } } }),
       db.auditMatchRequest.count({ where: { createdAt: { gte: since } } }),
+      db.auditUserMatchRequest.count({ where: { createdAt: { gte: since } } }),
     ]);
 
     return {
@@ -372,11 +375,191 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         users: userCount,
         matchRequests: matchCount,
         matchResults: resultCount,
+        recommendations: recCount,
+        recommendationResults: recResultCount,
       },
       last24Hours: {
         jobs: jobsLast24h,
         users: usersLast24h,
         matchRequests: matchesLast24h,
+        recommendations: recsLast24h,
+      },
+    };
+  });
+
+  // Get recent user match requests (recommendations)
+  fastify.get('/admin/recommendations', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { limit = '20', userId } = request.query as { limit?: string; userId?: string };
+    const take = Math.min(parseInt(limit, 10) || 20, 100);
+
+    const where = userId ? { userId } : {};
+
+    const records = await db.auditUserMatchRequest.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        userId: true,
+        requestId: true,
+        createdAt: true,
+        jobCount: true,
+        weightsSource: true,
+        thresholdUsed: true,
+        topKUsed: true,
+        resultsReturned: true,
+        countGteThreshold: true,
+        missingDomainVectors: true,
+        userExpertiseTier: true,
+        suggestedThreshold: true,
+        suggestedThresholdMethod: true,
+        elapsedMs: true,
+      },
+    });
+
+    // Fetch user info for display
+    const userIds = [...new Set(records.map((r) => r.userId))];
+    const users = await db.auditUserUpsert.findMany({
+      where: { userId: { in: userIds } },
+      orderBy: { createdAt: 'desc' },
+      distinct: ['userId'],
+      select: { userId: true, domainCapsule: true, expertiseTier: true, country: true },
+    });
+    const userMap = new Map(users.map((u) => [u.userId, u]));
+
+    // Add user info to each record
+    const recordsWithUser = records.map((r) => ({
+      ...r,
+      userInfo: userMap.get(r.userId) || null,
+    }));
+
+    logger.info(
+      { event: 'admin.recommendations.query', count: records.length, userId },
+      'Admin queried recommendation audit records'
+    );
+
+    return { count: recordsWithUser.length, records: recordsWithUser };
+  });
+
+  // Get a single user match request with all job scores
+  fastify.get('/admin/recommendations/:recId', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { recId } = request.params as { recId: string };
+    const id = parseInt(recId, 10);
+    if (isNaN(id)) {
+      return { error: 'Invalid recommendation ID' };
+    }
+
+    const matchRequest = await db.auditUserMatchRequest.findUnique({
+      where: { id },
+      include: {
+        results: {
+          orderBy: { rank: 'asc' },
+        },
+      },
+    });
+
+    if (!matchRequest) {
+      return { error: 'Recommendation request not found' };
+    }
+
+    // Get user info for context
+    const userInfo = await db.auditUserUpsert.findFirst({
+      where: { userId: matchRequest.userId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        domainCapsule: true,
+        taskCapsule: true,
+        expertiseTier: true,
+        credentials: true,
+        country: true,
+        languages: true,
+        resumeChars: true,
+        hasWorkExperience: true,
+        hasEducation: true,
+        hasLabelingExperience: true,
+      },
+    });
+
+    // Get job info for each result
+    const jobIds = matchRequest.results.map((r) => r.jobId);
+    const jobInfos = await db.auditJobUpsert.findMany({
+      where: { jobId: { in: jobIds } },
+      distinct: ['jobId'],
+      orderBy: { createdAt: 'desc' },
+      select: {
+        jobId: true,
+        title: true,
+        domainCapsule: true,
+        taskCapsule: true,
+        jobClass: true,
+        credentials: true,
+      },
+    });
+
+    const jobMap = new Map(jobInfos.map((j) => [j.jobId, j]));
+
+    // Enrich results with job info
+    const enrichedResults = matchRequest.results.map((r) => ({
+      ...r,
+      jobInfo: jobMap.get(r.jobId) || null,
+    }));
+
+    logger.info(
+      { event: 'admin.recommendation.detail', recId: id, resultsCount: matchRequest.results.length },
+      'Admin queried recommendation detail'
+    );
+
+    return {
+      matchRequest: {
+        ...matchRequest,
+        results: enrichedResults,
+      },
+      userInfo,
+    };
+  });
+
+  // Delete a user match request and its results
+  fastify.delete('/admin/recommendations/:recId', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { recId } = request.params as { recId: string };
+    const id = parseInt(recId, 10);
+
+    if (isNaN(id)) {
+      return { error: 'Invalid recommendation ID' };
+    }
+
+    // First delete the results (due to foreign key constraint)
+    const deletedResults = await db.auditUserMatchResult.deleteMany({
+      where: { matchRequestId: id },
+    });
+
+    // Then delete the match request
+    const deletedMatch = await db.auditUserMatchRequest.delete({
+      where: { id },
+    }).catch(() => null);
+
+    if (!deletedMatch) {
+      return { error: 'Recommendation not found' };
+    }
+
+    logger.info(
+      { event: 'admin.recommendation.delete', recId: id, resultsDeleted: deletedResults.count },
+      'Admin deleted recommendation request'
+    );
+
+    return {
+      status: 'ok',
+      deleted: {
+        recId: id,
+        resultsCount: deletedResults.count,
       },
     };
   });
