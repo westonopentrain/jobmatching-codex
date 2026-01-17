@@ -7,7 +7,7 @@ import { ensureAuthorized } from '../utils/auth';
 import { EMBEDDING_DIMENSION } from '../services/embeddings';
 import { fetchVectors, queryByVector, QueryMatch } from '../services/pinecone';
 import { getWeightProfile, JobClass } from '../services/job-classifier';
-import { auditMatchRequest } from '../services/audit';
+import { auditMatchRequest, auditUserMatchRequest } from '../services/audit';
 import { checkMatchAlerts } from '../services/alerts';
 
 const SCORE_FORMULA = 'two-channel-linear-v1';
@@ -53,6 +53,8 @@ interface CandidateScore {
 interface JobScore {
   job_id: string;
   job_class: JobClass;
+  w_domain: number;
+  w_task: number;
   s_domain: number | null;
   s_task: number | null;
   final: number;
@@ -645,11 +647,17 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
         throw error;
       }
 
+      // Get user expertise tier from metadata for audit
+      const userMetadata = userVectors[userDomainVectorId]?.metadata as Record<string, unknown> | undefined;
+      const userExpertiseTier = (userMetadata?.expertise_tier as string | undefined) ?? undefined;
+
       // Score each job against the user
       const missingJobs: string[] = [];
       const jobScores: Array<{
         job_id: string;
         job_class: JobClass;
+        w_domain: number;
+        w_task: number;
         s_domain: number | null;
         s_task: number | null;
         finalRaw: number;
@@ -695,6 +703,8 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
         jobScores.push({
           job_id: jobId,
           job_class: jobClass,
+          w_domain: weights.domain,
+          w_task: weights.task,
           s_domain: domainSimilarity,
           s_task: taskSimilarity,
           finalRaw,
@@ -721,6 +731,8 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
       const results: JobScore[] = limitedResults.map((entry, index) => ({
         job_id: entry.job_id,
         job_class: entry.job_class,
+        w_domain: roundScore(entry.w_domain),
+        w_task: roundScore(entry.w_task),
         s_domain: entry.s_domain !== null ? roundScore(entry.s_domain) : null,
         s_task: entry.s_task !== null ? roundScore(entry.s_task) : null,
         final: roundScore(entry.finalRaw),
@@ -754,6 +766,34 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'Computed job recommendations for user'
       );
+
+      // Audit logging (non-blocking)
+      auditUserMatchRequest({
+        userId: user_id,
+        requestId,
+        jobCount: job_ids.length,
+        weightsSource: auto_weights ? 'auto' : 'request',
+        thresholdUsed: threshold,
+        topKUsed: topK,
+        resultsReturned: results.length,
+        countGteThreshold: countGteSuggestedThreshold,
+        missingDomainVectors: missingJobs.length,
+        missingTaskVectors: 0, // Jobs always have both or neither
+        userExpertiseTier,
+        suggestedThreshold: autoThreshold.threshold,
+        suggestedThresholdMethod: autoThreshold.method,
+        elapsedMs: elapsedRounded,
+        results: results.map((r) => ({
+          jobId: r.job_id,
+          jobClass: r.job_class,
+          wDomain: r.w_domain,
+          wTask: r.w_task,
+          sDomain: r.s_domain,
+          sTask: r.s_task,
+          finalScore: r.final,
+          rank: r.rank,
+        })),
+      });
 
       const responseBody: Record<string, unknown> = {
         status: 'ok',

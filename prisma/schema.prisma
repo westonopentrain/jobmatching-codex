@@ -146,3 +146,62 @@ model EvaluationGroundTruth {
   @@index([jobId])
   @@index([userId])
 }
+
+// User match request audit (score_jobs_for_user)
+model AuditUserMatchRequest {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")
+  requestId String?  @map("request_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Request params
+  jobCount      Int?    @map("job_count")
+  weightsSource String? @map("weights_source")
+  thresholdUsed Float?  @map("threshold_used")
+  topKUsed      Int?    @map("top_k_used")
+
+  // Results summary
+  resultsReturned      Int? @map("results_returned")
+  countGteThreshold    Int? @map("count_gte_threshold")
+  missingDomainVectors Int? @map("missing_domain_vectors")
+  missingTaskVectors   Int? @map("missing_task_vectors")
+
+  // User context (for display)
+  userExpertiseTier String? @map("user_expertise_tier")
+
+  // Threshold info
+  suggestedThreshold       Float?  @map("suggested_threshold")
+  suggestedThresholdMethod String? @map("suggested_threshold_method")
+
+  // Metrics
+  elapsedMs Int? @map("elapsed_ms")
+
+  // Relations
+  results AuditUserMatchResult[]
+
+  @@map("audit_user_match_requests")
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// Individual job scores for user match
+model AuditUserMatchResult {
+  id             Int    @id @default(autoincrement())
+  matchRequestId Int    @map("match_request_id")
+  jobId          String @map("job_id")
+
+  jobClass   String? @map("job_class")
+  wDomain    Float?  @map("w_domain")
+  wTask      Float?  @map("w_task")
+  sDomain    Float?  @map("s_domain")
+  sTask      Float?  @map("s_task")
+  finalScore Float   @map("final_score")
+  rank       Int
+
+  // Relations
+  matchRequest AuditUserMatchRequest @relation(fields: [matchRequestId], references: [id], onDelete: Cascade)
+
+  @@map("audit_user_match_results")
+  @@index([matchRequestId])
+  @@index([jobId])
+}

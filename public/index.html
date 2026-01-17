@@ -47,6 +47,10 @@
         <span class="stat-value" id="stat-users-24h">-</span>
         <span class="stat-label">Users (24h)</span>
       </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-recs">-</span>
+        <span class="stat-label">Recommendations</span>
+      </div>
     </div>
 
     <!-- Tabs -->
@@ -54,6 +58,7 @@
       <button class="tab active" data-tab="jobs">Jobs</button>
       <button class="tab" data-tab="users">Users</button>
       <button class="tab" data-tab="matches">Matches</button>
+      <button class="tab" data-tab="recommendations">Recommendations</button>
     </nav>
 
     <!-- Tab Content -->
@@ -125,6 +130,29 @@
           <tbody></tbody>
         </table>
         <div class="loading" id="matches-loading">Loading...</div>
+      </div>
+
+      <!-- Recommendations Tab -->
+      <div id="recommendations-tab" class="tab-pane hidden">
+        <div class="toolbar">
+          <input type="text" id="rec-search" placeholder="Search by User ID...">
+          <button id="rec-search-btn">Search</button>
+          <button id="rec-clear-btn">Clear</button>
+        </div>
+        <table id="recs-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Expertise</th>
+              <th>Jobs Scored</th>
+              <th>Above Threshold</th>
+              <th>Suggested</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="loading" id="recs-loading">Loading...</div>
       </div>
     </main>
 

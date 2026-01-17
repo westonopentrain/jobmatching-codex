@@ -5,6 +5,7 @@
 // State
 let apiKey = localStorage.getItem('apiKey') || '';
 let currentMatchContext = null; // Stores { matchRequest, jobInfo, results, currentIndex }
+let currentRecContext = null; // Stores { matchRequest, userInfo, results, currentIndex }
 
 // DOM Elements
 const loginScreen = document.getElementById('login-screen');
@@ -37,15 +38,24 @@ function init() {
     if (e.target === modal) closeModal();
   });
 
-  // Keyboard navigation for candidate detail view
+  // Keyboard navigation for candidate/job detail view
   document.addEventListener('keydown', (e) => {
-    if (!currentMatchContext) return;
-    if (e.key === 'ArrowLeft') {
-      navigateCandidate(-1);
-    } else if (e.key === 'ArrowRight') {
-      navigateCandidate(1);
-    } else if (e.key === 'Escape') {
-      backToMatchList();
+    if (currentMatchContext) {
+      if (e.key === 'ArrowLeft') {
+        navigateCandidate(-1);
+      } else if (e.key === 'ArrowRight') {
+        navigateCandidate(1);
+      } else if (e.key === 'Escape') {
+        backToMatchList();
+      }
+    } else if (currentRecContext) {
+      if (e.key === 'ArrowLeft') {
+        navigateRecJob(-1);
+      } else if (e.key === 'ArrowRight') {
+        navigateRecJob(1);
+      } else if (e.key === 'Escape') {
+        backToRecList();
+      }
     }
   });
 
@@ -80,6 +90,15 @@ function init() {
   document.getElementById('match-clear-btn').addEventListener('click', () => {
     document.getElementById('match-search').value = '';
     loadMatches();
+  });
+
+  document.getElementById('rec-search-btn').addEventListener('click', () => {
+    const userId = document.getElementById('rec-search').value.trim();
+    loadRecommendations(userId);
+  });
+  document.getElementById('rec-clear-btn').addEventListener('click', () => {
+    document.getElementById('rec-search').value = '';
+    loadRecommendations();
   });
 }
 
@@ -215,6 +234,7 @@ async function loadStats() {
     document.getElementById('stat-matches').textContent = data.totals.matchRequests;
     document.getElementById('stat-jobs-24h').textContent = data.last24Hours.jobs;
     document.getElementById('stat-users-24h').textContent = data.last24Hours.users;
+    document.getElementById('stat-recs').textContent = data.totals.recommendations || 0;
   } catch (err) {
     console.error('Failed to load stats:', err);
   }
@@ -329,6 +349,63 @@ async function loadMatches(jobId = '') {
   } catch (err) {
     loading.textContent = 'Error loading matches';
     console.error('Failed to load matches:', err);
+  }
+}
+
+async function loadRecommendations(userId = '') {
+  const loading = document.getElementById('recs-loading');
+  const tbody = document.querySelector('#recs-table tbody');
+  loading.classList.remove('hidden');
+  tbody.innerHTML = '';
+
+  try {
+    const endpoint = userId ? `/admin/recommendations?userId=${encodeURIComponent(userId)}` : '/admin/recommendations?limit=50';
+    const data = await apiFetch(endpoint);
+
+    loading.classList.add('hidden');
+
+    if (data.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;">No recommendations found</td></tr>';
+      return;
+    }
+
+    data.records.forEach(rec => {
+      const tr = document.createElement('tr');
+      const userDisplay = rec.userInfo?.domainCapsule ? truncate(rec.userInfo.domainCapsule.split('Keywords')[0], 40) : truncate(rec.userId, 20);
+      tr.innerHTML = `
+        <td>
+          <div style="font-weight:500;">${escapeHtml(userDisplay)}</div>
+          <div style="font-size:11px;color:#666;"><code>${escapeHtml(truncate(rec.userId, 24))}</code></div>
+        </td>
+        <td><span class="badge badge-${rec.userExpertiseTier || 'entry'}">${rec.userExpertiseTier || 'entry'}</span></td>
+        <td>${rec.jobCount || '-'}</td>
+        <td>${rec.countGteThreshold || 0}</td>
+        <td>${rec.suggestedThreshold ? (rec.suggestedThreshold * 100).toFixed(0) + '%' : '-'} <small>(${rec.suggestedThresholdMethod || ''})</small></td>
+        <td>${formatDate(rec.createdAt)}</td>
+      `;
+      tr.addEventListener('click', () => showRecommendationDetail(rec.id));
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    loading.textContent = 'Error loading recommendations';
+    console.error('Failed to load recommendations:', err);
+  }
+}
+
+async function deleteRecommendation(recId) {
+  if (!confirm(`Are you sure you want to delete this recommendation?\n\nThis will remove the recommendation request and all scored jobs from the audit trail.`)) {
+    return;
+  }
+
+  try {
+    await apiDelete(`/admin/recommendations/${recId}`);
+    alert('Recommendation deleted successfully');
+    closeModal();
+    loadRecommendations();
+    loadStats();
+  } catch (err) {
+    alert('Failed to delete recommendation: ' + err.message);
+    console.error('Failed to delete recommendation:', err);
   }
 }
 
@@ -803,6 +880,327 @@ async function showMatchDetail(matchId) {
   }
 }
 
+// Recommendation Detail View (user→jobs)
+async function showRecommendationDetail(recId) {
+  modalBody.innerHTML = '<div class="loading">Loading...</div>';
+  modal.classList.remove('hidden');
+
+  try {
+    const data = await apiFetch(`/admin/recommendations/${recId}`);
+
+    if (data.error) {
+      modalBody.innerHTML = `<p class="error">${escapeHtml(data.error)}</p>`;
+      return;
+    }
+
+    const m = data.matchRequest;
+    const user = data.userInfo;
+
+    let html = `
+      <div class="detail-header">
+        <h2>Job Recommendations for User</h2>
+        <div class="meta">
+          User ID: <code>${escapeHtml(m.userId)}</code> |
+          Scored: ${formatDate(m.createdAt)}
+        </div>
+        <button class="btn-delete" onclick="deleteRecommendation(${m.id})">Delete</button>
+      </div>
+
+      <div class="detail-section">
+        <h3>User Profile</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Expertise Tier</span>
+            <span class="value"><span class="badge badge-${m.userExpertiseTier || 'entry'}">${m.userExpertiseTier || 'entry'}</span></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Country</span>
+            <span class="value">${escapeHtml(user?.country || '-')}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Languages</span>
+            <span class="value">${user?.languages?.join(', ') || '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Credentials</span>
+            <span class="value">${user?.credentials?.length ? user.credentials.join(', ') : 'None'}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h3>Scoring Configuration</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Weights Source</span>
+            <span class="value"><span class="badge badge-${m.weightsSource === 'auto' ? 'success' : 'generic'}">${m.weightsSource || 'auto'}</span></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Jobs Scored</span>
+            <span class="value">${m.jobCount || '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Results Returned</span>
+            <span class="value">${m.resultsReturned || '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Above Threshold</span>
+            <span class="value">${m.countGteThreshold || 0}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Suggested Threshold</span>
+            <span class="value">${m.suggestedThreshold ? (m.suggestedThreshold * 100).toFixed(0) + '%' : '-'} (${m.suggestedThresholdMethod || '-'})</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Processing Time</span>
+            <span class="value">${m.elapsedMs ? m.elapsedMs + 'ms' : '-'}</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // User capsules
+    if (user) {
+      html += `
+        <div class="detail-section collapsible">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">User Capsules (click to expand)</h3>
+          <div class="collapsible-content">
+            <div style="margin-bottom: 12px;">
+              <strong>Domain:</strong>
+              <div class="capsule-text" style="margin-top:4px;">${escapeHtml(user.domainCapsule || '-')}</div>
+            </div>
+            <div>
+              <strong>Task:</strong>
+              <div class="capsule-text" style="margin-top:4px;">${escapeHtml(user.taskCapsule || '-')}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Scored jobs table
+    const suggestedThreshold = m.suggestedThreshold || 0;
+    html += `
+      <div class="detail-section">
+        <h3>All Scored Jobs (${m.results?.length || 0} jobs)</h3>
+        <table class="detail-table score-table">
+          <thead>
+            <tr>
+              <th style="width:40px">Rank</th>
+              <th style="width:80px">Final</th>
+              <th style="width:70px">Domain</th>
+              <th style="width:70px">Task</th>
+              <th>Job Info</th>
+              <th style="width:80px">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    if (m.results && m.results.length > 0) {
+      m.results.forEach((r, idx) => {
+        const job = r.jobInfo;
+        const finalPct = r.finalScore ? (r.finalScore * 100).toFixed(1) : '-';
+        const domainPct = r.sDomain ? (r.sDomain * 100).toFixed(1) : '-';
+        const taskPct = r.sTask ? (r.sTask * 100).toFixed(1) : '-';
+        const aboveThreshold = r.finalScore >= suggestedThreshold;
+
+        // Color code by score
+        let scoreClass = '';
+        if (r.finalScore >= 0.7) scoreClass = 'score-high';
+        else if (r.finalScore >= 0.5) scoreClass = 'score-medium';
+        else if (r.finalScore >= 0.3) scoreClass = 'score-low';
+        else scoreClass = 'score-poor';
+
+        const jobTitle = job?.title || truncate(r.jobId, 30);
+        const weights = r.wDomain && r.wTask ? `D:${(r.wDomain * 100).toFixed(0)}% T:${(r.wTask * 100).toFixed(0)}%` : '';
+
+        html += `
+          <tr class="clickable-row ${scoreClass}" data-job-index="${idx}">
+            <td><strong>#${r.rank || idx + 1}</strong></td>
+            <td><strong>${finalPct}%</strong></td>
+            <td>${domainPct}%</td>
+            <td>${taskPct}%</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="font-weight:500;">${escapeHtml(truncate(jobTitle, 40))}</span>
+                <span class="badge badge-${r.jobClass || 'generic'}" style="font-size:10px;">${r.jobClass || 'generic'}</span>
+                ${weights ? `<span style="font-size:10px;color:#666;">${weights}</span>` : ''}
+              </div>
+              <div style="font-size:11px;color:#666;margin-top:2px;"><code>${escapeHtml(truncate(r.jobId, 24))}</code></div>
+            </td>
+            <td>
+              <span class="badge badge-${aboveThreshold ? 'success' : 'warning'}">${aboveThreshold ? 'Match' : 'Below'}</span>
+            </td>
+          </tr>
+        `;
+      });
+    } else {
+      html += '<tr><td colspan="6" style="text-align:center;color:#666;">No results</td></tr>';
+    }
+
+    html += '</tbody></table></div>';
+
+    modalBody.innerHTML = html;
+
+    // Store context for job navigation
+    currentRecContext = {
+      matchRequest: m,
+      userInfo: user,
+      results: m.results || [],
+      currentIndex: -1
+    };
+
+    // Add click handlers for job rows
+    modalBody.querySelectorAll('[data-job-index]').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = parseInt(row.dataset.jobIndex, 10);
+        showJobFromRecDetail(idx);
+      });
+    });
+  } catch (err) {
+    modalBody.innerHTML = '<p class="error">Error loading recommendation details</p>';
+    console.error('Failed to load recommendation detail:', err);
+  }
+}
+
+// Job Detail from Recommendation View (with navigation)
+async function showJobFromRecDetail(index) {
+  if (!currentRecContext || !currentRecContext.results[index]) return;
+
+  currentRecContext.currentIndex = index;
+  const result = currentRecContext.results[index];
+  const user = currentRecContext.userInfo;
+  const total = currentRecContext.results.length;
+  const suggestedThreshold = currentRecContext.matchRequest.suggestedThreshold || 0;
+
+  const job = result.jobInfo;
+  const finalPct = result.finalScore ? (result.finalScore * 100).toFixed(1) : '-';
+  const domainPct = result.sDomain ? (result.sDomain * 100).toFixed(1) : '-';
+  const taskPct = result.sTask ? (result.sTask * 100).toFixed(1) : '-';
+  const aboveThreshold = result.finalScore >= suggestedThreshold;
+
+  let html = `
+    <div class="candidate-nav">
+      <button class="nav-btn" onclick="navigateRecJob(-1)" ${index === 0 ? 'disabled' : ''}>← Previous</button>
+      <span class="nav-info">
+        <strong>Job ${index + 1} of ${total}</strong>
+        for user ${escapeHtml(truncate(currentRecContext.matchRequest.userId, 16))}
+      </span>
+      <button class="nav-btn" onclick="navigateRecJob(1)" ${index >= total - 1 ? 'disabled' : ''}>Next →</button>
+    </div>
+    <div class="candidate-nav-hint">Use ← → arrow keys to navigate, Esc to go back</div>
+
+    <div class="detail-section scores-section">
+      <div class="score-boxes">
+        <div class="score-box ${getScoreClass(result.finalScore)}">
+          <div class="score-label">Final Score</div>
+          <div class="score-value">${finalPct}%</div>
+        </div>
+        <div class="score-box">
+          <div class="score-label">Domain</div>
+          <div class="score-value">${domainPct}%</div>
+        </div>
+        <div class="score-box">
+          <div class="score-label">Task</div>
+          <div class="score-value">${taskPct}%</div>
+        </div>
+        <div class="score-box ${aboveThreshold ? 'score-high' : 'score-poor'}">
+          <div class="score-label">Status</div>
+          <div class="score-value">${aboveThreshold ? 'Match' : 'Below'}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Why This Score?</h3>
+      <div class="detail-grid">
+        <div class="detail-item">
+          <span class="label">Job Class</span>
+          <span class="value"><span class="badge badge-${result.jobClass || 'generic'}">${result.jobClass || 'generic'}</span></span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Weights Used</span>
+          <span class="value">D:${result.wDomain ? (result.wDomain * 100).toFixed(0) : '-'}% / T:${result.wTask ? (result.wTask * 100).toFixed(0) : '-'}%</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Suggested Threshold</span>
+          <span class="value">${(suggestedThreshold * 100).toFixed(0)}%</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Score vs Threshold</span>
+          <span class="value">${finalPct}% ${result.finalScore >= suggestedThreshold ? '>=' : '<'} ${(suggestedThreshold * 100).toFixed(0)}%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Job Info</h3>
+      <div class="detail-grid">
+        <div class="detail-item" style="grid-column: 1 / -1;">
+          <span class="label">Title</span>
+          <span class="value" style="font-weight:500;">${escapeHtml(job?.title || 'Unknown')}</span>
+        </div>
+        <div class="detail-item" style="grid-column: 1 / -1;">
+          <span class="label">Job ID</span>
+          <span class="value"><code>${escapeHtml(result.jobId)}</code></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Capsule Comparison</h3>
+      <div class="capsule-comparison">
+        <div class="capsule-item">
+          <div class="capsule-label">User Domain Capsule</div>
+          <div class="capsule-text">${escapeHtml(user?.domainCapsule || '-')}</div>
+        </div>
+        <div class="capsule-item">
+          <div class="capsule-label">Job Domain Capsule</div>
+          <div class="capsule-text">${escapeHtml(job?.domainCapsule || '-')}</div>
+        </div>
+      </div>
+      <div class="capsule-comparison" style="margin-top:16px;">
+        <div class="capsule-item">
+          <div class="capsule-label">User Task Capsule</div>
+          <div class="capsule-text">${escapeHtml(user?.taskCapsule || '-')}</div>
+        </div>
+        <div class="capsule-item">
+          <div class="capsule-label">Job Task Capsule</div>
+          <div class="capsule-text">${escapeHtml(job?.taskCapsule || '-')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Back button
+  html += `
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee;">
+      <button class="nav-btn" onclick="backToRecList()">← Back to Recommendation Results</button>
+    </div>
+  `;
+
+  modalBody.innerHTML = html;
+}
+
+function navigateRecJob(direction) {
+  if (!currentRecContext) return;
+  const newIndex = currentRecContext.currentIndex + direction;
+  if (newIndex >= 0 && newIndex < currentRecContext.results.length) {
+    showJobFromRecDetail(newIndex);
+  }
+}
+
+function backToRecList() {
+  if (!currentRecContext) {
+    closeModal();
+    return;
+  }
+  const recId = currentRecContext.matchRequest.id;
+  currentRecContext = null;
+  showRecommendationDetail(recId);
+}
+
 // Candidate Detail View (with navigation)
 async function showCandidateDetail(index) {
   if (!currentMatchContext || !currentMatchContext.results[index]) return;
@@ -997,12 +1395,14 @@ function switchTab(tabName) {
   if (tabName === 'jobs') loadJobs();
   else if (tabName === 'users') loadUsers();
   else if (tabName === 'matches') loadMatches();
+  else if (tabName === 'recommendations') loadRecommendations();
 }
 
 // Modal
 function closeModal() {
   modal.classList.add('hidden');
   currentMatchContext = null; // Clear navigation context
+  currentRecContext = null; // Clear recommendation navigation context
 }
 
 // Utilities
