@@ -190,13 +190,15 @@ model AuditUserMatchResult {
   matchRequestId Int    @map("match_request_id")
   jobId          String @map("job_id")
 
-  jobClass   String? @map("job_class")
-  wDomain    Float?  @map("w_domain")
-  wTask      Float?  @map("w_task")
-  sDomain    Float?  @map("s_domain")
-  sTask      Float?  @map("s_task")
-  finalScore Float   @map("final_score")
-  rank       Int
+  jobClass       String?  @map("job_class")
+  wDomain        Float?   @map("w_domain")
+  wTask          Float?   @map("w_task")
+  sDomain        Float?   @map("s_domain")
+  sTask          Float?   @map("s_task")
+  finalScore     Float    @map("final_score")
+  rank           Int
+  jobThreshold   Float?   @map("job_threshold")
+  aboveThreshold Boolean? @map("above_threshold")
 
   // Relations
   matchRequest AuditUserMatchRequest @relation(fields: [matchRequestId], references: [id], onDelete: Cascade)

@@ -59,6 +59,8 @@ interface JobScore {
   s_task: number | null;
   final: number;
   rank: number;
+  job_threshold: number;
+  above_threshold: boolean;
 }
 
 function chunkArray<T>(items: readonly T[], chunkSize: number): T[][] {
@@ -104,6 +106,28 @@ function normalizeWeights(rawDomain: number, rawTask: number): { domain: number;
 const AUTO_THRESHOLD_PERCENTILE = 0.30; // Top 30%
 const MIN_THRESHOLD_SPECIALIZED = 0.50; // 50% for specialized jobs
 const MIN_THRESHOLD_GENERIC = 0.35; // 35% for generic jobs
+
+// Tier-based threshold multipliers for generic jobs
+// Specialists need higher scores to match generic jobs (they should focus on specialized work)
+// This prevents OBGYN doctors from seeing "NFC Photo Collection" in their recommendations
+const TIER_THRESHOLD_MULTIPLIERS: Record<string, number> = {
+  'specialist': 1.3, // 45% for generic (35% * 1.3)
+  'expert': 1.15, // ~40% for generic
+  'intermediate': 1.0,
+  'entry': 1.0,
+};
+
+// Get the minimum threshold for a job based on user tier and job class
+function getTierAdjustedMinThreshold(
+  userTier: string | undefined,
+  jobClass: JobClass
+): number {
+  const baseMin = jobClass === 'specialized' ? MIN_THRESHOLD_SPECIALIZED : MIN_THRESHOLD_GENERIC;
+  const multiplier = TIER_THRESHOLD_MULTIPLIERS[userTier ?? 'entry'] ?? 1.0;
+
+  // Only apply multiplier to generic jobs - specialists shouldn't see irrelevant generic jobs
+  return jobClass === 'generic' ? baseMin * multiplier : baseMin;
+}
 
 interface AutoThresholdResult {
   threshold: number;
@@ -727,24 +751,32 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
       // Apply topK limit
       const limitedResults = jobScores.slice(0, topK);
 
-      // Build final results with ranks
-      const results: JobScore[] = limitedResults.map((entry, index) => ({
-        job_id: entry.job_id,
-        job_class: entry.job_class,
-        w_domain: roundScore(entry.w_domain),
-        w_task: roundScore(entry.w_task),
-        s_domain: entry.s_domain !== null ? roundScore(entry.s_domain) : null,
-        s_task: entry.s_task !== null ? roundScore(entry.s_task) : null,
-        final: roundScore(entry.finalRaw),
-        rank: index + 1,
-      }));
+      // Build final results with ranks and per-job thresholds
+      // Each job gets its own threshold based on user tier and job class
+      const results: JobScore[] = limitedResults.map((entry, index) => {
+        const jobThreshold = getTierAdjustedMinThreshold(userExpertiseTier, entry.job_class);
+        const finalScore = roundScore(entry.finalRaw);
+        return {
+          job_id: entry.job_id,
+          job_class: entry.job_class,
+          w_domain: roundScore(entry.w_domain),
+          w_task: roundScore(entry.w_task),
+          s_domain: entry.s_domain !== null ? roundScore(entry.s_domain) : null,
+          s_task: entry.s_task !== null ? roundScore(entry.s_task) : null,
+          final: finalScore,
+          rank: index + 1,
+          job_threshold: roundScore(jobThreshold),
+          above_threshold: finalScore >= jobThreshold,
+        };
+      });
 
-      // Calculate suggested threshold for user→jobs matching
-      // Use "generic" as the baseline since we're mixing job types
-      // The threshold helps filter which jobs to show/recommend
+      // Count jobs above their individual thresholds
+      const countGteSuggestedThreshold = results.filter((r) => r.above_threshold).length;
+
+      // Calculate overall suggested threshold for backward compatibility
+      // Uses "generic" baseline but individual job thresholds are more accurate
       const allScores = results.map((r) => r.final);
       const autoThreshold = calculateAutoThreshold('generic', allScores);
-      const countGteSuggestedThreshold = results.filter((r) => r.final >= autoThreshold.threshold).length;
 
       const countGteThreshold =
         threshold !== undefined ? results.filter((r) => r.final >= threshold).length : undefined;
@@ -792,14 +824,18 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
           sTask: r.s_task,
           finalScore: r.final,
           rank: r.rank,
+          jobThreshold: r.job_threshold,
+          aboveThreshold: r.above_threshold,
         })),
       });
 
       const responseBody: Record<string, unknown> = {
         status: 'ok',
         user_id,
-        // Suggested threshold for recommendation display
-        // Uses generic job threshold (35% min) since we're mixing job types
+        user_expertise_tier: userExpertiseTier,
+        // Per-job thresholds are calculated based on user tier and job class
+        // Specialists have higher thresholds for generic jobs to filter irrelevant work
+        // Each job in results includes its own job_threshold and above_threshold fields
         suggested_threshold: {
           value: roundScore(autoThreshold.threshold),
           method: autoThreshold.method,
