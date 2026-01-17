@@ -66,3 +66,38 @@ export function joinLanguages(languages: string[]): string {
   }
   return languages.join(', ');
 }
+
+/**
+ * Normalize language strings from Bubble format to simple language names.
+ * Handles formats like:
+ * - "Slovak - Proficiency Level = Native or Bilingual" → "Slovak"
+ * - "English" → "English"
+ * - Comma-separated within a single string → split into multiple
+ *
+ * Returns deduplicated array of language names.
+ */
+export function normalizeLanguages(languages?: string[]): string[] {
+  if (!languages || languages.length === 0) {
+    return [];
+  }
+
+  const normalized = new Set<string>();
+
+  for (const lang of languages) {
+    // Split by comma in case multiple languages are in one string
+    const parts = lang.split(',');
+
+    for (const part of parts) {
+      // Extract language name before " - " if present
+      const dashIndex = part.indexOf(' - ');
+      const name = dashIndex > 0 ? part.slice(0, dashIndex) : part;
+      const trimmed = name.trim();
+
+      if (trimmed.length > 0) {
+        normalized.add(trimmed);
+      }
+    }
+  }
+
+  return Array.from(normalized);
+}

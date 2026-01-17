@@ -51,24 +51,17 @@ const jobNotifySchema = z.object({
 // Constants for notify scoring
 const NOTIFY_TOPK = 10000;
 const FILTER_CHUNK_SIZE = 500;
-const MIN_THRESHOLD_SPECIALIZED = 0.50;
-const MIN_THRESHOLD_GENERIC = 0.35;
+// Thresholds lowered significantly to improve notification rates
+// - Specialized 50% → 35%: Angular job went from 5.6% to ~31% notification rate
+// - Generic 35% → 25%: Generic jobs can be done by almost anyone
+const MIN_THRESHOLD_SPECIALIZED = 0.35;
+const MIN_THRESHOLD_GENERIC = 0.25;
 
-// Tier-based threshold multipliers for generic jobs
-const TIER_THRESHOLD_MULTIPLIERS: Record<string, number> = {
-  'specialist': 1.3,
-  'expert': 1.15,
-  'intermediate': 1.0,
-  'entry': 1.0,
-};
+// Tier multipliers removed - they penalized experts for generic tasks,
+// and expertise is already captured in similarity scores for specialized jobs
 
-function getTierAdjustedMinThreshold(
-  userTier: string | undefined,
-  jobClass: JobClass
-): number {
-  const baseMin = jobClass === 'specialized' ? MIN_THRESHOLD_SPECIALIZED : MIN_THRESHOLD_GENERIC;
-  const multiplier = TIER_THRESHOLD_MULTIPLIERS[userTier ?? 'entry'] ?? 1.0;
-  return jobClass === 'generic' ? baseMin * multiplier : baseMin;
+function getBaseMinThreshold(jobClass: JobClass): number {
+  return jobClass === 'specialized' ? MIN_THRESHOLD_SPECIALIZED : MIN_THRESHOLD_GENERIC;
 }
 
 function isValidVector(values: number[] | undefined): values is number[] {
@@ -432,6 +425,23 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       if (usersNamespace) filterOptions.namespace = usersNamespace;
 
       const domainMatches = await queryUsersByFilter(filterOptions);
+      const poolSize = domainMatches.length;
+
+      // Calculate pool size multiplier - be lenient for small pools
+      let poolSizeMultiplier = 1.0;
+      if (poolSize > 0 && poolSize < 30) {
+        poolSizeMultiplier = 0.6; // 40% lower threshold for tiny pools
+        log.info(
+          { event: 'notify.tiny_pool', poolSize, multiplier: poolSizeMultiplier },
+          'Tiny pool - significantly lowering thresholds'
+        );
+      } else if (poolSize >= 30 && poolSize < 100) {
+        poolSizeMultiplier = 0.8; // 20% lower threshold for small pools
+        log.info(
+          { event: 'notify.small_pool', poolSize, multiplier: poolSizeMultiplier },
+          'Small pool - lowering thresholds'
+        );
+      }
 
       log.info(
         {
@@ -508,12 +518,13 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         const taskScore = taskScoreMap.get(userId) ?? 0;
         const finalScore = weights.w_domain * domainScore + weights.w_task * taskScore;
 
-        // Get user's expertise tier from metadata
+        // Get user's expertise tier from metadata (kept for audit logging)
         const metadata = userMetadataMap.get(userId) as Record<string, unknown> | undefined;
         const expertiseTier = metadata?.expertise_tier as string | undefined;
 
-        // Calculate tier-adjusted threshold
-        const threshold = getTierAdjustedMinThreshold(expertiseTier, classification.jobClass);
+        // Calculate threshold with pool size adjustment
+        const baseThreshold = getBaseMinThreshold(classification.jobClass);
+        const threshold = baseThreshold * poolSizeMultiplier;
         const aboveThreshold = finalScore >= threshold;
 
         scoredUsers.push({
