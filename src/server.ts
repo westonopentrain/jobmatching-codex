@@ -14,10 +14,16 @@ export function buildServer() {
     logger: loggerOptions,
   });
 
-  // Custom JSON parser that logs raw body on parse errors
+  // Custom JSON parser that sanitizes curly quotes and logs raw body on parse errors
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
     try {
-      const json = JSON.parse(body as string);
+      // Sanitize curly/smart quotes from Bubble before parsing
+      // Replace: " " ' ' with straight quotes " and '
+      let sanitized = body as string;
+      sanitized = sanitized.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"'); // curly double quotes
+      sanitized = sanitized.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'"); // curly single quotes
+
+      const json = JSON.parse(sanitized);
       done(null, json);
     } catch (err) {
       // Log the raw body for debugging
