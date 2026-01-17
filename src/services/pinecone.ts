@@ -220,9 +220,19 @@ export async function queryUsersByFilter(options: UserFilterOptions): Promise<Fi
     // If hasGlobal, don't add country filter - accept all countries
   }
 
-  // Language filter: match if user's languages array has any overlap with available_languages
+  // Language filter: require ALL specified languages (AND logic)
+  // When a job requires ["Slovak", "English"], user must speak BOTH languages
   if (languages && languages.length > 0) {
-    filter.languages = { $in: languages };
+    if (languages.length === 1) {
+      // Single language: simple containment check
+      filter.languages = { $in: languages };
+    } else {
+      // Multiple languages: require ALL of them using $and
+      // Each condition checks that the user's languages array contains this language
+      filter.$and = languages.map(lang => ({
+        languages: { $in: [lang] }
+      }));
+    }
   }
 
   const queryRequest: Record<string, unknown> = {
@@ -264,4 +274,70 @@ export async function queryUsersByFilter(options: UserFilterOptions): Promise<Fi
   }
 
   return results;
+}
+
+/**
+ * Query users who have overlapping subject matter codes with the required codes.
+ * Uses Pinecone's $in operator to check if any user codes match required codes.
+ *
+ * @param userIds - List of user IDs to check (from previous query)
+ * @param requiredCodes - Subject matter codes required by the job (e.g., ["technology:angular"])
+ * @returns Set of user IDs who have at least one matching code
+ */
+export async function queryUsersWithSubjectMatterCodes(
+  userIds: string[],
+  requiredCodes: string[],
+  namespace?: string
+): Promise<Set<string>> {
+  if (userIds.length === 0 || requiredCodes.length === 0) {
+    return new Set();
+  }
+
+  const index = getIndex();
+  const matchingUserIds = new Set<string>();
+
+  // Query for users whose subject_matter_codes overlap with required codes
+  // Pinecone's $in operator checks if the field contains any of the specified values
+  const filter: Record<string, unknown> = {
+    type: 'user',
+    section: 'domain',
+    user_id: { $in: userIds },
+    subject_matter_codes: { $in: requiredCodes },
+  };
+
+  const queryRequest: Record<string, unknown> = {
+    // Use a zero vector since we only care about metadata filtering
+    vector: new Array(1536).fill(0),
+    topK: userIds.length,
+    includeMetadata: true,
+    filter,
+  };
+
+  if (namespace) {
+    queryRequest.namespace = namespace;
+  }
+
+  const response = await withRetry(() =>
+    index.query(queryRequest as Parameters<Index<VectorMetadata>['query']>[0])
+  ).catch((error) => {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError({
+      code: 'PINECONE_QUERY_FAILURE',
+      statusCode: 502,
+      message: 'Failed to query users by subject matter codes',
+      details: { message: (error as Error).message },
+    });
+  });
+
+  for (const match of response.matches ?? []) {
+    const metadata = match.metadata as Record<string, unknown> | undefined;
+    const userId = metadata?.user_id as string | undefined;
+    if (userId) {
+      matchingUserIds.add(userId);
+    }
+  }
+
+  return matchingUserIds;
 }

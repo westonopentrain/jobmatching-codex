@@ -47,14 +47,23 @@ Return ONLY valid JSON in this exact format:
   "confidence": 0.0-1.0,
   "credentials": ["MD", "PhD", etc] or [],
   "minimum_experience_years": number or 0,
-  "subject_matter_codes": ["medical:obgyn", "legal:corporate", "engineering:civil", etc] or [],
+  "subject_matter_codes": ["technology:angular", "medical:obgyn", "legal:corporate", etc] or [],
   "expertise_tier": "entry" | "intermediate" | "expert" | "specialist",
   "countries": ["US", "UK", etc] or [],
   "languages": ["en", "es", etc] or [],
   "reasoning": "brief explanation"
 }
 
-Subject matter code format: "domain:specialty" where domain is one of: medical, legal, finance, engineering, science, education, technology. If no specific specialty, use "domain:general".`;
+SUBJECT MATTER CODES - Extract SPECIFIC skills/frameworks required:
+- Format: "domain:specific_skill" where domain is one of: medical, legal, finance, engineering, science, education, technology
+- For tech jobs: Extract the PRIMARY framework/language from the job title and requirements
+  - Use SPECIFIC frameworks: "technology:angular", "technology:react", "technology:vue", "technology:python", "technology:java"
+  - Do NOT use generic categories like "technology:javascript", "technology:frontend", "technology:web"
+  - If job says "Angular Developer", MUST include "technology:angular"
+  - If job says "React Engineer", MUST include "technology:react"
+- For medical: "medical:obgyn", "medical:cardiology", "medical:radiology", etc.
+- For legal: "legal:corporate", "legal:ip", "legal:criminal", etc.
+- If no specific specialty applies, leave the array empty rather than using generic codes.`;
 
 const CLASSIFICATION_TEMPERATURE = 0.1;
 const CLASSIFICATION_MAX_TOKENS = 800;

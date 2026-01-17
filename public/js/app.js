@@ -554,6 +554,15 @@ async function showJobDetail(jobId) {
       </div>
 
       <div class="detail-section">
+        <h3>Subject Matter Codes</h3>
+        <div class="keywords">
+          ${(latest.subjectMatterCodes && latest.subjectMatterCodes.length > 0)
+            ? latest.subjectMatterCodes.map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
+            : '<span style="color:#666;">None specified</span>'}
+        </div>
+      </div>
+
+      <div class="detail-section">
         <h3>Domain Capsule</h3>
         <div class="capsule-text">${escapeHtml(latest.domainCapsule || 'Not generated')}</div>
       </div>
