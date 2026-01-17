@@ -5,13 +5,14 @@ import { AppError, toErrorResponse } from '../utils/errors';
 import { ensureAuthorized } from '../utils/auth';
 import { getEnv, requireEnv } from '../utils/env';
 import { EMBEDDING_DIMENSION, EMBEDDING_MODEL, embedText } from '../services/embeddings';
-import { upsertVector, deleteVectors, fetchVectors, queryUsersByFilter, queryByVector } from '../services/pinecone';
+import { upsertVector, deleteVectors, fetchVectors, queryUsersByFilter, queryByVector, queryUsersWithSubjectMatterCodes } from '../services/pinecone';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
 import { classifyJob, getWeightProfile, JobClass } from '../services/job-classifier';
 import { auditJobUpsert, auditJobNotify } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
+import { logger } from '../utils/logger';
 
 const fieldSchema = z.object({
   Instructions: z.string().optional(),
@@ -542,7 +543,52 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       scoredUsers.sort((a, b) => b.finalScore - a.finalScore);
 
       // Filter to users above their threshold
-      const qualifiedUsers = scoredUsers.filter((u) => u.aboveThreshold);
+      let qualifiedUsers = scoredUsers.filter((u) => u.aboveThreshold);
+
+      // Step 5: Subject matter code filtering for specialized jobs
+      // Jobs have subject_matter_codes like ["technology:angular", "medical:obgyn"]
+      // Filter users to only those with overlapping codes
+      const jobSubjectMatterCodes = classification.requirements.subjectMatterCodes ?? [];
+      const subjectMatterFilteredUserIds = new Set<string>();
+
+      if (jobSubjectMatterCodes.length > 0 && qualifiedUsers.length > 0) {
+        log.info(
+          {
+            event: 'notify.subject_matter_filter_start',
+            jobId: job_id,
+            jobSubjectMatterCodes,
+            candidatesBeforeFilter: qualifiedUsers.length,
+          },
+          'Starting subject matter code filtering'
+        );
+
+        // Filter using metadata we already have (more efficient than Pinecone query)
+        const jobCodesSet = new Set(jobSubjectMatterCodes);
+        const usersBeforeFilter = qualifiedUsers.length;
+
+        qualifiedUsers = qualifiedUsers.filter((u) => {
+          const metadata = userMetadataMap.get(u.userId) as Record<string, unknown> | undefined;
+          const userCodes = (metadata?.subject_matter_codes as string[]) ?? [];
+          // User must have at least ONE matching code
+          const hasMatchingCode = userCodes.some((code) => jobCodesSet.has(code));
+          if (!hasMatchingCode) {
+            subjectMatterFilteredUserIds.add(u.userId);
+          }
+          return hasMatchingCode;
+        });
+
+        log.info(
+          {
+            event: 'notify.subject_matter_filter_complete',
+            jobId: job_id,
+            jobSubjectMatterCodes,
+            candidatesBeforeFilter: usersBeforeFilter,
+            candidatesAfterFilter: qualifiedUsers.length,
+            filteredOut: usersBeforeFilter - qualifiedUsers.length,
+          },
+          'Subject matter code filtering complete'
+        );
+      }
 
       // Apply safety cap
       const notifyUsers = qualifiedUsers.slice(0, max_notifications);
@@ -557,6 +603,8 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
 
         if (!u.aboveThreshold) {
           filterReason = `below_threshold (${(u.threshold * 100).toFixed(0)}%)`;
+        } else if (subjectMatterFilteredUserIds.has(u.userId)) {
+          filterReason = `missing_subject_matter (${jobSubjectMatterCodes.join(', ')})`;
         } else if (!notifiedUserIds.has(u.userId)) {
           filterReason = 'max_cap';
         }
@@ -579,15 +627,23 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
       const elapsedRounded = Math.round(elapsedMs);
 
+      // Calculate counts for logging/auditing
+      const aboveThresholdCount = scoredUsers.filter((u) => u.aboveThreshold).length;
+      const subjectMatterFilteredCount = subjectMatterFilteredUserIds.size;
+      const afterSubjectMatterFilterCount = qualifiedUsers.length;
+
       log.info(
         {
           event: 'notify.complete',
           jobId: job_id,
           jobClass: classification.jobClass,
           totalCandidates: userIds.length,
-          totalAboveThreshold: qualifiedUsers.length,
+          totalAboveThreshold: aboveThresholdCount,
+          subjectMatterFiltered: subjectMatterFilteredCount,
+          afterAllFilters: afterSubjectMatterFilterCount,
           notifyCount: notifyUsers.length,
           maxNotifications: max_notifications,
+          jobSubjectMatterCodes: jobSubjectMatterCodes.length > 0 ? jobSubjectMatterCodes : undefined,
           elapsedMs: elapsedRounded,
         },
         'Job notification processing complete'
@@ -603,7 +659,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         languagesFilter: available_languages ?? [],
         maxNotifications: max_notifications,
         totalCandidates: userIds.length,
-        totalAboveThreshold: qualifiedUsers.length,
+        totalAboveThreshold: aboveThresholdCount,
         notifyCount: notifyUsers.length,
         thresholdSpecialized: MIN_THRESHOLD_SPECIALIZED,
         thresholdGeneric: MIN_THRESHOLD_GENERIC,
@@ -619,7 +675,13 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         job_class: classification.jobClass,
         notify_user_ids: notifyUsers.map((u) => u.userId),
         total_candidates: userIds.length,
-        total_above_threshold: qualifiedUsers.length,
+        total_above_threshold: aboveThresholdCount,
+        // Subject matter code filtering stats (for specialized jobs)
+        subject_matter_filter: jobSubjectMatterCodes.length > 0 ? {
+          required_codes: jobSubjectMatterCodes,
+          filtered_count: subjectMatterFilteredCount,
+          passed_count: afterSubjectMatterFilterCount,
+        } : undefined,
         // Include score distribution for debugging
         score_stats: {
           min: scoredUsers.length > 0 ? Math.round(scoredUsers[scoredUsers.length - 1]!.finalScore * 100) / 100 : null,
