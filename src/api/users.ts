@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { AppError, toErrorResponse } from '../utils/errors';
-import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText } from '../utils/sanitize';
+import { sanitizeOptionalString, sanitizeStringArray, truncateResumeText, normalizeLanguages } from '../utils/sanitize';
 import { ensureAuthorized } from '../utils/auth';
 
 import { NormalizedUserProfile } from '../utils/types';
@@ -153,6 +153,28 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         'User classified for smart matching'
       );
 
+      // Fix tier misclassification: users with "general workforce" domain
+      // should not be classified as specialists/experts
+      const domainLower = capsules.domain.text.toLowerCase();
+      if (
+        (domainLower.includes('general workforce') ||
+          domainLower.includes('no specialized expertise')) &&
+        classification.expertiseTier !== 'entry'
+      ) {
+        const originalTier = classification.expertiseTier;
+        classification.expertiseTier = 'entry';
+        log.info(
+          {
+            event: 'user.tier_downgraded',
+            userId: normalized.userId,
+            originalTier,
+            newTier: 'entry',
+            reason: 'general_workforce_domain',
+          },
+          'Downgraded tier due to general workforce domain'
+        );
+      }
+
       const domainVectorId = `usr_${normalized.userId}::domain`;
       const taskVectorId = `usr_${normalized.userId}::task`;
 
@@ -170,6 +192,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         'Embeddings generated successfully'
       );
 
+      // Normalize languages for Pinecone filtering (extracts "Slovak" from "Slovak - Proficiency Level = Native")
+      const normalizedLanguagesForFilter = normalizeLanguages(normalized.languages);
+
       // Build enriched metadata for Pinecone filtering
       // This enables smart matching: filter/weight users by expertise, credentials, etc.
       const userMetadata = {
@@ -181,7 +206,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         subject_matter_codes: classification.subjectMatterCodes,
         years_experience: classification.yearsExperience,
         has_labeling_experience: classification.hasLabelingExperience,
-        languages: normalized.languages,
+        languages: normalizedLanguagesForFilter,
         ...(normalized.country ? { country: normalized.country } : {}),
       };
 
