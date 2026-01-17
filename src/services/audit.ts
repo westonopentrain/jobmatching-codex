@@ -101,6 +101,37 @@ export interface UserMatchRequestAuditData {
   }> | undefined;
 }
 
+export interface JobNotifyAuditData {
+  jobId: string;
+  requestId: string;
+  title?: string | undefined;
+  jobClass?: string | undefined;
+  countriesFilter: string[];
+  languagesFilter: string[];
+  maxNotifications: number;
+  totalCandidates: number;
+  totalAboveThreshold: number;
+  notifyCount: number;
+  thresholdSpecialized: number;
+  thresholdGeneric: number;
+  scoreMin?: number | undefined;
+  scoreMax?: number | undefined;
+  elapsedMs?: number | undefined;
+  results?: Array<{
+    userId: string;
+    userCountry: string | null;
+    userLanguages: string[];
+    expertiseTier: string | null;
+    domainScore: number;
+    taskScore: number;
+    finalScore: number;
+    thresholdUsed: number;
+    notified: boolean;
+    filterReason: string | null;
+    rank: number | null;
+  }> | undefined;
+}
+
 /**
  * Log a job upsert to the audit trail (non-blocking)
  */
@@ -330,6 +361,79 @@ export function auditUserMatchRequest(data: UserMatchRequestAuditData): void {
       logger.error(
         { event: 'audit.user_match_request.error', userId: data.userId, error },
         'Failed to save user match request audit record'
+      );
+    }
+  })();
+}
+
+/**
+ * Log a job notification request to the audit trail (non-blocking)
+ */
+export function auditJobNotify(data: JobNotifyAuditData): void {
+  if (!isDatabaseAvailable()) {
+    return;
+  }
+
+  // Fire and forget
+  (async () => {
+    try {
+      const db = getDb();
+      if (!db) return;
+
+      // Create the notification request record
+      const notifyRequest = await db.auditJobNotify.create({
+        data: {
+          jobId: data.jobId,
+          requestId: data.requestId,
+          title: data.title ?? null,
+          jobClass: data.jobClass ?? null,
+          countriesFilter: data.countriesFilter,
+          languagesFilter: data.languagesFilter,
+          maxNotifications: data.maxNotifications,
+          totalCandidates: data.totalCandidates,
+          totalAboveThreshold: data.totalAboveThreshold,
+          notifyCount: data.notifyCount,
+          thresholdSpecialized: data.thresholdSpecialized,
+          thresholdGeneric: data.thresholdGeneric,
+          scoreMin: data.scoreMin ?? null,
+          scoreMax: data.scoreMax ?? null,
+          elapsedMs: data.elapsedMs ?? null,
+        },
+      });
+
+      // Create result records if provided
+      if (data.results && data.results.length > 0) {
+        await db.auditJobNotifyResult.createMany({
+          data: data.results.map((r) => ({
+            notifyRequestId: notifyRequest.id,
+            userId: r.userId,
+            userCountry: r.userCountry,
+            userLanguages: r.userLanguages,
+            expertiseTier: r.expertiseTier,
+            domainScore: r.domainScore,
+            taskScore: r.taskScore,
+            finalScore: r.finalScore,
+            thresholdUsed: r.thresholdUsed,
+            notified: r.notified,
+            filterReason: r.filterReason,
+            rank: r.rank,
+          })),
+        });
+      }
+
+      logger.debug(
+        {
+          event: 'audit.job_notify.saved',
+          jobId: data.jobId,
+          notifyRequestId: notifyRequest.id,
+          resultsCount: data.results?.length ?? 0,
+        },
+        'Job notify audit record saved'
+      );
+    } catch (error) {
+      logger.error(
+        { event: 'audit.job_notify.error', jobId: data.jobId, error },
+        'Failed to save job notify audit record'
       );
     }
   })();

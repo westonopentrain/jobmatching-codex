@@ -207,3 +207,72 @@ model AuditUserMatchResult {
   @@index([matchRequestId])
   @@index([jobId])
 }
+
+// Job notification audit trail
+model AuditJobNotify {
+  id                  Int      @id @default(autoincrement())
+  jobId               String   @map("job_id")
+  requestId           String   @map("request_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  // Job info
+  title               String?
+  jobClass            String?  @map("job_class")
+
+  // Filters used
+  countriesFilter     String[] @map("countries_filter")
+  languagesFilter     String[] @map("languages_filter")
+  maxNotifications    Int      @map("max_notifications")
+
+  // Results summary
+  totalCandidates     Int      @map("total_candidates")
+  totalAboveThreshold Int      @map("total_above_threshold")
+  notifyCount         Int      @map("notify_count")
+
+  // Threshold info
+  thresholdSpecialized Float   @map("threshold_specialized")
+  thresholdGeneric     Float   @map("threshold_generic")
+
+  // Score stats
+  scoreMin            Float?   @map("score_min")
+  scoreMax            Float?   @map("score_max")
+
+  // Performance
+  elapsedMs           Int?     @map("elapsed_ms")
+
+  // Relations
+  results             AuditJobNotifyResult[]
+
+  @@map("audit_job_notify")
+  @@index([jobId])
+  @@index([createdAt])
+}
+
+// Individual user results for job notifications
+model AuditJobNotifyResult {
+  id              Int            @id @default(autoincrement())
+  notifyRequestId Int            @map("notify_request_id")
+  notifyRequest   AuditJobNotify @relation(fields: [notifyRequestId], references: [id], onDelete: Cascade)
+
+  userId          String         @map("user_id")
+
+  // User context
+  userCountry     String?        @map("user_country")
+  userLanguages   String[]       @map("user_languages")
+  expertiseTier   String?        @map("expertise_tier")
+
+  // Scores
+  domainScore     Float          @map("domain_score")
+  taskScore       Float          @map("task_score")
+  finalScore      Float          @map("final_score")
+  thresholdUsed   Float          @map("threshold_used")
+
+  // Outcome
+  notified        Boolean
+  filterReason    String?        @map("filter_reason")
+  rank            Int?
+
+  @@map("audit_job_notify_results")
+  @@index([notifyRequestId])
+  @@index([userId])
+}

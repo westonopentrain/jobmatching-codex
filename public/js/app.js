@@ -6,6 +6,7 @@
 let apiKey = localStorage.getItem('apiKey') || '';
 let currentMatchContext = null; // Stores { matchRequest, jobInfo, results, currentIndex }
 let currentRecContext = null; // Stores { matchRequest, userInfo, results, currentIndex }
+let currentNotifyContext = null; // Stores { notifyRequest, jobInfo, results, currentIndex }
 
 // DOM Elements
 const loginScreen = document.getElementById('login-screen');
@@ -56,6 +57,14 @@ function init() {
       } else if (e.key === 'Escape') {
         backToRecList();
       }
+    } else if (currentNotifyContext) {
+      if (e.key === 'ArrowLeft') {
+        navigateNotifyUser(-1);
+      } else if (e.key === 'ArrowRight') {
+        navigateNotifyUser(1);
+      } else if (e.key === 'Escape') {
+        backToNotifyList();
+      }
     }
   });
 
@@ -99,6 +108,15 @@ function init() {
   document.getElementById('rec-clear-btn').addEventListener('click', () => {
     document.getElementById('rec-search').value = '';
     loadRecommendations();
+  });
+
+  document.getElementById('notify-search-btn').addEventListener('click', () => {
+    const jobId = document.getElementById('notify-search').value.trim();
+    loadNotifications(jobId);
+  });
+  document.getElementById('notify-clear-btn').addEventListener('click', () => {
+    document.getElementById('notify-search').value = '';
+    loadNotifications();
   });
 }
 
@@ -235,6 +253,7 @@ async function loadStats() {
     document.getElementById('stat-jobs-24h').textContent = data.last24Hours.jobs;
     document.getElementById('stat-users-24h').textContent = data.last24Hours.users;
     document.getElementById('stat-recs').textContent = data.totals.recommendations || 0;
+    document.getElementById('stat-notifications').textContent = data.totals.notifications || 0;
   } catch (err) {
     console.error('Failed to load stats:', err);
   }
@@ -406,6 +425,79 @@ async function deleteRecommendation(recId) {
   } catch (err) {
     alert('Failed to delete recommendation: ' + err.message);
     console.error('Failed to delete recommendation:', err);
+  }
+}
+
+async function loadNotifications(jobId = '') {
+  const loading = document.getElementById('notifications-loading');
+  const tbody = document.querySelector('#notifications-table tbody');
+  loading.classList.remove('hidden');
+  tbody.innerHTML = '';
+
+  try {
+    const endpoint = jobId ? `/admin/notifications?jobId=${encodeURIComponent(jobId)}` : '/admin/notifications?limit=50';
+    const data = await apiFetch(endpoint);
+
+    loading.classList.add('hidden');
+
+    if (data.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#666;">No notifications found</td></tr>';
+      return;
+    }
+
+    data.records.forEach(notify => {
+      const tr = document.createElement('tr');
+      const jobDisplay = notify.title || truncate(notify.jobId, 20);
+      const filters = [];
+      if (notify.countriesFilter?.length) filters.push(`${notify.countriesFilter.length} countries`);
+      if (notify.languagesFilter?.length) filters.push(`${notify.languagesFilter.length} languages`);
+      const filterDisplay = filters.length > 0 ? filters.join(', ') : 'None';
+
+      // Determine status
+      let statusBadge = '';
+      if (notify.notifyCount > 0) {
+        statusBadge = '<span class="badge badge-success">OK</span>';
+      } else if (notify.totalCandidates === 0) {
+        statusBadge = '<span class="badge badge-warning">No candidates</span>';
+      } else {
+        statusBadge = '<span class="badge badge-error">0 notified</span>';
+      }
+
+      tr.innerHTML = `
+        <td>
+          <div style="font-weight:500;">${escapeHtml(jobDisplay)}</div>
+          <div style="font-size:11px;color:#666;"><code>${escapeHtml(truncate(notify.jobId, 24))}</code></div>
+        </td>
+        <td>${notify.totalCandidates}</td>
+        <td><strong>${notify.notifyCount}</strong></td>
+        <td>${notify.totalAboveThreshold}</td>
+        <td><small>${escapeHtml(filterDisplay)}</small></td>
+        <td>${formatDate(notify.createdAt)}</td>
+        <td>${statusBadge}</td>
+      `;
+      tr.addEventListener('click', () => showNotificationDetail(notify.id));
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    loading.textContent = 'Error loading notifications';
+    console.error('Failed to load notifications:', err);
+  }
+}
+
+async function deleteNotification(notifyId) {
+  if (!confirm(`Are you sure you want to delete this notification?\n\nThis will remove the notification request and all user results from the audit trail.`)) {
+    return;
+  }
+
+  try {
+    await apiDelete(`/admin/notifications/${notifyId}`);
+    alert('Notification deleted successfully');
+    closeModal();
+    loadNotifications();
+    loadStats();
+  } catch (err) {
+    alert('Failed to delete notification: ' + err.message);
+    console.error('Failed to delete notification:', err);
   }
 }
 
@@ -1209,6 +1301,392 @@ function backToRecList() {
   showRecommendationDetail(recId);
 }
 
+// Notification Detail View
+async function showNotificationDetail(notifyId) {
+  modalBody.innerHTML = '<div class="loading">Loading...</div>';
+  modal.classList.remove('hidden');
+
+  try {
+    const data = await apiFetch(`/admin/notifications/${notifyId}`);
+
+    if (data.error) {
+      modalBody.innerHTML = `<p class="error">${escapeHtml(data.error)}</p>`;
+      return;
+    }
+
+    const n = data.notifyRequest;
+    const job = data.jobInfo;
+
+    // Separate notified and filtered users
+    const notifiedUsers = n.results.filter(r => r.notified);
+    const filteredUsers = n.results.filter(r => !r.notified);
+
+    let html = `
+      <div class="detail-header">
+        <h2>${job?.title ? escapeHtml(job.title) : 'Job Notification Results'}</h2>
+        <div class="meta">
+          Job ID: <code>${escapeHtml(n.jobId)}</code> |
+          Sent: ${formatDate(n.createdAt)}
+        </div>
+        <button class="btn-delete" onclick="deleteNotification(${n.id})">Delete</button>
+      </div>
+
+      <div class="detail-section">
+        <h3>Summary</h3>
+        <div class="score-boxes">
+          <div class="score-box ${n.notifyCount > 0 ? 'score-high' : 'score-poor'}">
+            <div class="score-label">Notified</div>
+            <div class="score-value">${n.notifyCount}</div>
+          </div>
+          <div class="score-box">
+            <div class="score-label">Above Threshold</div>
+            <div class="score-value">${n.totalAboveThreshold}</div>
+          </div>
+          <div class="score-box">
+            <div class="score-label">Total Candidates</div>
+            <div class="score-value">${n.totalCandidates}</div>
+          </div>
+          <div class="score-box">
+            <div class="score-label">Max Cap</div>
+            <div class="score-value">${n.maxNotifications}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h3>Filters & Thresholds</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Job Class</span>
+            <span class="value"><span class="badge badge-${n.jobClass || 'generic'}">${n.jobClass || 'generic'}</span></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Countries Filter</span>
+            <span class="value">${n.countriesFilter?.length ? n.countriesFilter.join(', ') : 'All'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Languages Filter</span>
+            <span class="value">${n.languagesFilter?.length ? n.languagesFilter.join(', ') : 'All'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Threshold (Specialized)</span>
+            <span class="value">${(n.thresholdSpecialized * 100).toFixed(0)}%</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Threshold (Generic)</span>
+            <span class="value">${(n.thresholdGeneric * 100).toFixed(0)}%</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Processing Time</span>
+            <span class="value">${n.elapsedMs ? n.elapsedMs + 'ms' : '-'}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h3>Score Distribution</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Min Score</span>
+            <span class="value">${n.scoreMin ? (n.scoreMin * 100).toFixed(1) + '%' : '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Max Score</span>
+            <span class="value">${n.scoreMax ? (n.scoreMax * 100).toFixed(1) + '%' : '-'}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Above Threshold</span>
+            <span class="value">${n.totalAboveThreshold} users</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Below Threshold</span>
+            <span class="value">${n.totalCandidates - n.totalAboveThreshold} users</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Notified Users Table
+    html += `
+      <div class="detail-section">
+        <h3>Notified Users (${notifiedUsers.length})</h3>
+        <table class="detail-table score-table">
+          <thead>
+            <tr>
+              <th style="width:40px">Rank</th>
+              <th style="width:70px">Score</th>
+              <th style="width:60px">Thresh</th>
+              <th>User Info</th>
+              <th style="width:80px">Tier</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    if (notifiedUsers.length > 0) {
+      notifiedUsers.forEach((r, idx) => {
+        const user = r.userInfo;
+        const finalPct = (r.finalScore * 100).toFixed(1);
+        const threshPct = (r.thresholdUsed * 100).toFixed(0);
+        const scoreClass = getScoreClass(r.finalScore);
+        const userCaption = user?.domainCapsule ? truncate(user.domainCapsule.split('Keywords')[0], 60) : '-';
+
+        html += `
+          <tr class="clickable-row ${scoreClass}" data-notify-user-index="${idx}">
+            <td><strong>#${r.rank || idx + 1}</strong></td>
+            <td><strong>${finalPct}%</strong></td>
+            <td style="color:#666;">${threshPct}%</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <code style="font-size:11px;">${escapeHtml(truncate(r.userId, 18))}</code>
+                ${r.userCountry ? `<span style="font-size:11px;">${escapeHtml(r.userCountry)}</span>` : ''}
+              </div>
+              <div style="font-size:11px;color:#666;margin-top:2px;">${escapeHtml(userCaption)}</div>
+            </td>
+            <td><span class="badge badge-${r.expertiseTier || 'entry'}">${r.expertiseTier || 'entry'}</span></td>
+          </tr>
+        `;
+      });
+    } else {
+      html += '<tr><td colspan="5" style="text-align:center;color:#666;">No users notified</td></tr>';
+    }
+
+    html += '</tbody></table></div>';
+
+    // Filtered Out Users Table
+    html += `
+      <div class="detail-section">
+        <h3>Filtered Out Users (${filteredUsers.length})</h3>
+        <table class="detail-table score-table">
+          <thead>
+            <tr>
+              <th style="width:70px">Score</th>
+              <th style="width:60px">Thresh</th>
+              <th>User Info</th>
+              <th style="width:80px">Tier</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    if (filteredUsers.length > 0) {
+      // Show first 50 filtered users
+      filteredUsers.slice(0, 50).forEach((r) => {
+        const user = r.userInfo;
+        const finalPct = (r.finalScore * 100).toFixed(1);
+        const threshPct = (r.thresholdUsed * 100).toFixed(0);
+        const scoreClass = getScoreClass(r.finalScore);
+        const userCaption = user?.domainCapsule ? truncate(user.domainCapsule.split('Keywords')[0], 50) : '-';
+
+        html += `
+          <tr class="${scoreClass}">
+            <td>${finalPct}%</td>
+            <td style="color:#666;">${threshPct}%</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <code style="font-size:11px;">${escapeHtml(truncate(r.userId, 18))}</code>
+                ${r.userCountry ? `<span style="font-size:11px;">${escapeHtml(r.userCountry)}</span>` : ''}
+              </div>
+              <div style="font-size:11px;color:#666;margin-top:2px;">${escapeHtml(userCaption)}</div>
+            </td>
+            <td><span class="badge badge-${r.expertiseTier || 'entry'}">${r.expertiseTier || 'entry'}</span></td>
+            <td><span class="badge badge-${r.filterReason?.includes('below') ? 'warning' : 'error'}">${escapeHtml(r.filterReason || '-')}</span></td>
+          </tr>
+        `;
+      });
+
+      if (filteredUsers.length > 50) {
+        html += `<tr><td colspan="5" style="text-align:center;color:#666;">... and ${filteredUsers.length - 50} more</td></tr>`;
+      }
+    } else {
+      html += '<tr><td colspan="5" style="text-align:center;color:#666;">No users filtered out</td></tr>';
+    }
+
+    html += '</tbody></table></div>';
+
+    modalBody.innerHTML = html;
+
+    // Store context for user navigation
+    currentNotifyContext = {
+      notifyRequest: n,
+      jobInfo: job,
+      results: notifiedUsers,
+      currentIndex: -1
+    };
+
+    // Add click handlers for notified user rows
+    modalBody.querySelectorAll('[data-notify-user-index]').forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = parseInt(row.dataset.notifyUserIndex, 10);
+        showNotifyUserDetail(idx);
+      });
+    });
+  } catch (err) {
+    modalBody.innerHTML = '<p class="error">Error loading notification details</p>';
+    console.error('Failed to load notification detail:', err);
+  }
+}
+
+// Notify User Detail View (with navigation)
+async function showNotifyUserDetail(index) {
+  if (!currentNotifyContext || !currentNotifyContext.results[index]) return;
+
+  currentNotifyContext.currentIndex = index;
+  const result = currentNotifyContext.results[index];
+  const job = currentNotifyContext.jobInfo;
+  const total = currentNotifyContext.results.length;
+
+  // Fetch full user details
+  let userData = null;
+  try {
+    const data = await apiFetch(`/admin/users/${encodeURIComponent(result.userId)}`);
+    userData = data.upserts?.[0] || null;
+  } catch (err) {
+    console.error('Failed to fetch user details:', err);
+  }
+
+  const raw = userData?.rawInput || {};
+  const finalPct = (result.finalScore * 100).toFixed(1);
+  const domainPct = (result.domainScore * 100).toFixed(1);
+  const taskPct = (result.taskScore * 100).toFixed(1);
+
+  let html = `
+    <div class="candidate-nav">
+      <button class="nav-btn" onclick="navigateNotifyUser(-1)" ${index === 0 ? 'disabled' : ''}>← Previous</button>
+      <span class="nav-info">
+        <strong>Notified User ${index + 1} of ${total}</strong>
+        ${job?.title ? ` for "${escapeHtml(truncate(job.title, 40))}"` : ''}
+      </span>
+      <button class="nav-btn" onclick="navigateNotifyUser(1)" ${index >= total - 1 ? 'disabled' : ''}>Next →</button>
+    </div>
+    <div class="candidate-nav-hint">Use ← → arrow keys to navigate, Esc to go back</div>
+
+    <div class="detail-section scores-section">
+      <div class="score-boxes">
+        <div class="score-box ${getScoreClass(result.finalScore)}">
+          <div class="score-label">Final Score</div>
+          <div class="score-value">${finalPct}%</div>
+        </div>
+        <div class="score-box">
+          <div class="score-label">Domain</div>
+          <div class="score-value">${domainPct}%</div>
+        </div>
+        <div class="score-box">
+          <div class="score-label">Task</div>
+          <div class="score-value">${taskPct}%</div>
+        </div>
+        <div class="score-box rank-box">
+          <div class="score-label">Rank</div>
+          <div class="score-value">#${result.rank || index + 1}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>User Profile</h3>
+      <div class="detail-grid">
+        <div class="detail-item">
+          <span class="label">User ID</span>
+          <span class="value"><code style="font-size:11px;">${escapeHtml(result.userId)}</code></span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Country</span>
+          <span class="value">${escapeHtml(result.userCountry || userData?.country || '-')}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Languages</span>
+          <span class="value">${result.userLanguages?.join(', ') || userData?.languages?.join(', ') || '-'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Expertise Tier</span>
+          <span class="value"><span class="badge badge-${result.expertiseTier || 'entry'}">${result.expertiseTier || 'entry'}</span></span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Threshold Used</span>
+          <span class="value">${(result.thresholdUsed * 100).toFixed(0)}%</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Credentials</span>
+          <span class="value">${userData?.credentials?.length ? userData.credentials.join(', ') : 'None'}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Capsules</h3>
+      <div class="capsule-comparison">
+        <div class="capsule-item">
+          <div class="capsule-label">User Domain</div>
+          <div class="capsule-text">${escapeHtml(userData?.domainCapsule || '-')}</div>
+        </div>
+        <div class="capsule-item">
+          <div class="capsule-label">User Task</div>
+          <div class="capsule-text">${escapeHtml(userData?.taskCapsule || '-')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Resume and work history
+  html += `
+    <div class="detail-section">
+      <h3>Resume & Work History</h3>
+      ${raw.resume_text ? `
+        <div style="margin-bottom:16px;">
+          <strong>Resume Text:</strong>
+          <div class="capsule-text resume-text" style="margin-top:4px;max-height:300px;overflow-y:auto;white-space:pre-wrap;">${escapeHtml(raw.resume_text)}</div>
+        </div>
+      ` : '<p style="color:#666;">No resume text available</p>'}
+
+      ${raw.work_experience && raw.work_experience.length > 0 ? `
+        <div style="margin-bottom:16px;">
+          <strong>Work Experience:</strong>
+          <ul style="margin:4px 0 0 20px;">
+            ${raw.work_experience.map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+
+      ${raw.labeling_experience && raw.labeling_experience.length > 0 ? `
+        <div>
+          <strong>Labeling Experience:</strong>
+          <ul style="margin:4px 0 0 20px;">
+            ${raw.labeling_experience.map(l => `<li>${escapeHtml(l)}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  // Back button
+  html += `
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee;">
+      <button class="nav-btn" onclick="backToNotifyList()">← Back to Notification Results</button>
+    </div>
+  `;
+
+  modalBody.innerHTML = html;
+}
+
+function navigateNotifyUser(direction) {
+  if (!currentNotifyContext) return;
+  const newIndex = currentNotifyContext.currentIndex + direction;
+  if (newIndex >= 0 && newIndex < currentNotifyContext.results.length) {
+    showNotifyUserDetail(newIndex);
+  }
+}
+
+function backToNotifyList() {
+  if (!currentNotifyContext) {
+    closeModal();
+    return;
+  }
+  const notifyId = currentNotifyContext.notifyRequest.id;
+  currentNotifyContext = null;
+  showNotificationDetail(notifyId);
+}
+
 // Candidate Detail View (with navigation)
 async function showCandidateDetail(index) {
   if (!currentMatchContext || !currentMatchContext.results[index]) return;
@@ -1404,6 +1882,7 @@ function switchTab(tabName) {
   else if (tabName === 'users') loadUsers();
   else if (tabName === 'matches') loadMatches();
   else if (tabName === 'recommendations') loadRecommendations();
+  else if (tabName === 'notifications') loadNotifications();
 }
 
 // Modal
@@ -1411,6 +1890,7 @@ function closeModal() {
   modal.classList.add('hidden');
   currentMatchContext = null; // Clear navigation context
   currentRecContext = null; // Clear recommendation navigation context
+  currentNotifyContext = null; // Clear notification navigation context
 }
 
 // Utilities
