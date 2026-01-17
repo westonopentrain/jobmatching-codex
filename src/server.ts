@@ -18,10 +18,11 @@ export function buildServer() {
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
     try {
       // Sanitize curly/smart quotes from Bubble before parsing
-      // Replace: " " ' ' with straight quotes " and '
+      // Bubble wraps values in curly quotes like: "title": ""value""
+      // We need to REMOVE these curly quotes, not replace them with straight quotes
       let sanitized = body as string;
-      sanitized = sanitized.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"'); // curly double quotes
-      sanitized = sanitized.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'"); // curly single quotes
+      sanitized = sanitized.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, ''); // remove curly double quotes
+      sanitized = sanitized.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, ''); // remove curly single quotes
 
       const json = JSON.parse(sanitized);
       done(null, json);
