@@ -55,6 +55,14 @@ Return ONLY valid JSON in this exact format:
 }
 
 SUBJECT MATTER CODES - Extract SPECIFIC skills/frameworks required:
+- IMPORTANT: For GENERIC jobs (basic labeling, data collection, photo tasks, annotation), ALWAYS leave array EMPTY []
+- Subject matter codes are ONLY for SPECIALIZED jobs that require domain expertise
+- Examples:
+  - "Photo collection task" → [] (generic - anyone can do it)
+  - "NFC e-ID Selfie Collection" → [] (generic - data collection task)
+  - "Video annotation task" → [] (generic - basic labeling)
+  - "Angular code review" → ["technology:angular"] (specialized - requires Angular expertise)
+  - "OBGYN medical review" → ["medical:obgyn"] (specialized - requires medical credentials)
 - Format: "domain:specific_skill" where domain is one of: medical, legal, finance, engineering, science, education, technology
 - For tech jobs: Extract the PRIMARY framework/language from the job title and requirements
   - Use SPECIFIC frameworks: "technology:angular", "technology:react", "technology:vue", "technology:python", "technology:java"
@@ -63,7 +71,7 @@ SUBJECT MATTER CODES - Extract SPECIFIC skills/frameworks required:
   - If job says "React Engineer", MUST include "technology:react"
 - For medical: "medical:obgyn", "medical:cardiology", "medical:radiology", etc.
 - For legal: "legal:corporate", "legal:ip", "legal:criminal", etc.
-- If no specific specialty applies, leave the array empty rather than using generic codes.`;
+- If no specific specialty applies or job is GENERIC, leave the array empty.`;
 
 const CLASSIFICATION_TEMPERATURE = 0.1;
 const CLASSIFICATION_MAX_TOKENS = 800;
