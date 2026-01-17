@@ -978,8 +978,10 @@ async function showRecommendationDetail(recId) {
       `;
     }
 
-    // Scored jobs table
-    const suggestedThreshold = m.suggestedThreshold || 0;
+    // Scored jobs table with per-job thresholds
+    // Each job has its own threshold based on user tier and job class:
+    // - Specialists: 45% for generic jobs, 50% for specialized
+    // - Entry/Intermediate: 35% for generic, 50% for specialized
     html += `
       <div class="detail-section">
         <h3>All Scored Jobs (${m.results?.length || 0} jobs)</h3>
@@ -988,6 +990,7 @@ async function showRecommendationDetail(recId) {
             <tr>
               <th style="width:40px">Rank</th>
               <th style="width:80px">Final</th>
+              <th style="width:60px">Thresh</th>
               <th style="width:70px">Domain</th>
               <th style="width:70px">Task</th>
               <th>Job Info</th>
@@ -1003,7 +1006,11 @@ async function showRecommendationDetail(recId) {
         const finalPct = r.finalScore ? (r.finalScore * 100).toFixed(1) : '-';
         const domainPct = r.sDomain ? (r.sDomain * 100).toFixed(1) : '-';
         const taskPct = r.sTask ? (r.sTask * 100).toFixed(1) : '-';
-        const aboveThreshold = r.finalScore >= suggestedThreshold;
+        // Use per-job threshold from API if available, otherwise fall back to global
+        const jobThreshold = r.jobThreshold ?? m.suggestedThreshold ?? 0.35;
+        const thresholdPct = (jobThreshold * 100).toFixed(0);
+        // Use aboveThreshold from API if available, otherwise calculate
+        const aboveThreshold = r.aboveThreshold ?? (r.finalScore >= jobThreshold);
 
         // Color code by score
         let scoreClass = '';
@@ -1019,6 +1026,7 @@ async function showRecommendationDetail(recId) {
           <tr class="clickable-row ${scoreClass}" data-job-index="${idx}">
             <td><strong>#${r.rank || idx + 1}</strong></td>
             <td><strong>${finalPct}%</strong></td>
+            <td style="color:#666;">${thresholdPct}%</td>
             <td>${domainPct}%</td>
             <td>${taskPct}%</td>
             <td>
@@ -1036,7 +1044,7 @@ async function showRecommendationDetail(recId) {
         `;
       });
     } else {
-      html += '<tr><td colspan="6" style="text-align:center;color:#666;">No results</td></tr>';
+      html += '<tr><td colspan="7" style="text-align:center;color:#666;">No results</td></tr>';
     }
 
     html += '</tbody></table></div>';

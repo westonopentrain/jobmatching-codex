@@ -96,6 +96,8 @@ export interface UserMatchRequestAuditData {
     sTask: number | null;
     finalScore: number;
     rank: number;
+    jobThreshold: number;
+    aboveThreshold: boolean;
   }> | undefined;
 }
 
@@ -309,6 +311,8 @@ export function auditUserMatchRequest(data: UserMatchRequestAuditData): void {
             sTask: r.sTask,
             finalScore: r.finalScore,
             rank: r.rank,
+            jobThreshold: r.jobThreshold,
+            aboveThreshold: r.aboveThreshold,
           })),
         });
       }
