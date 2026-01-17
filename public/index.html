@@ -51,6 +51,10 @@
         <span class="stat-value" id="stat-recs">-</span>
         <span class="stat-label">Recommendations</span>
       </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-notifications">-</span>
+        <span class="stat-label">Notifications</span>
+      </div>
     </div>
 
     <!-- Tabs -->
@@ -59,6 +63,7 @@
       <button class="tab" data-tab="users">Users</button>
       <button class="tab" data-tab="matches">Matches</button>
       <button class="tab" data-tab="recommendations">Recommendations</button>
+      <button class="tab" data-tab="notifications">Notifications</button>
     </nav>
 
     <!-- Tab Content -->
@@ -153,6 +158,30 @@
           <tbody></tbody>
         </table>
         <div class="loading" id="recs-loading">Loading...</div>
+      </div>
+
+      <!-- Notifications Tab -->
+      <div id="notifications-tab" class="tab-pane hidden">
+        <div class="toolbar">
+          <input type="text" id="notify-search" placeholder="Search by Job ID...">
+          <button id="notify-search-btn">Search</button>
+          <button id="notify-clear-btn">Clear</button>
+        </div>
+        <table id="notifications-table">
+          <thead>
+            <tr>
+              <th>Job</th>
+              <th>Candidates</th>
+              <th>Notified</th>
+              <th>Above Threshold</th>
+              <th>Filters</th>
+              <th>Created</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="loading" id="notifications-loading">Loading...</div>
       </div>
     </main>
 

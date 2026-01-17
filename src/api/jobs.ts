@@ -10,7 +10,7 @@ import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
 import { classifyJob, getWeightProfile, JobClass } from '../services/job-classifier';
-import { auditJobUpsert } from '../services/audit';
+import { auditJobUpsert, auditJobNotify } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
 
 const fieldSchema = z.object({
@@ -536,6 +536,35 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       // Apply safety cap
       const notifyUsers = qualifiedUsers.slice(0, max_notifications);
 
+      // Create a set of notified user IDs for quick lookup
+      const notifiedUserIds = new Set(notifyUsers.map((u) => u.userId));
+
+      // Build audit results with filter reasons
+      const auditResults = scoredUsers.map((u, index) => {
+        const metadata = userMetadataMap.get(u.userId) as Record<string, unknown> | undefined;
+        let filterReason: string | null = null;
+
+        if (!u.aboveThreshold) {
+          filterReason = `below_threshold (${(u.threshold * 100).toFixed(0)}%)`;
+        } else if (!notifiedUserIds.has(u.userId)) {
+          filterReason = 'max_cap';
+        }
+
+        return {
+          userId: u.userId,
+          userCountry: (metadata?.country as string) ?? null,
+          userLanguages: (metadata?.languages as string[]) ?? [],
+          expertiseTier: u.expertiseTier ?? null,
+          domainScore: u.domainScore,
+          taskScore: u.taskScore,
+          finalScore: u.finalScore,
+          thresholdUsed: u.threshold,
+          notified: notifiedUserIds.has(u.userId),
+          filterReason,
+          rank: notifiedUserIds.has(u.userId) ? index + 1 : null,
+        };
+      });
+
       const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
       const elapsedRounded = Math.round(elapsedMs);
 
@@ -552,6 +581,26 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'Job notification processing complete'
       );
+
+      // Audit logging (non-blocking)
+      auditJobNotify({
+        jobId: job_id,
+        requestId,
+        title: normalized.title,
+        jobClass: classification.jobClass,
+        countriesFilter: available_countries ?? [],
+        languagesFilter: available_languages ?? [],
+        maxNotifications: max_notifications,
+        totalCandidates: userIds.length,
+        totalAboveThreshold: qualifiedUsers.length,
+        notifyCount: notifyUsers.length,
+        thresholdSpecialized: MIN_THRESHOLD_SPECIALIZED,
+        thresholdGeneric: MIN_THRESHOLD_GENERIC,
+        scoreMin: scoredUsers.length > 0 ? scoredUsers[scoredUsers.length - 1]!.finalScore : undefined,
+        scoreMax: scoredUsers.length > 0 ? scoredUsers[0]!.finalScore : undefined,
+        elapsedMs: elapsedRounded,
+        results: auditResults,
+      });
 
       return reply.status(200).send({
         status: 'ok',

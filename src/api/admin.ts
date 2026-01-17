@@ -351,22 +351,25 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
     if (!db) return { error: 'Database not available' };
 
-    const [jobCount, userCount, matchCount, resultCount, recCount, recResultCount] = await Promise.all([
+    const [jobCount, userCount, matchCount, resultCount, recCount, recResultCount, notifyCount, notifyResultCount] = await Promise.all([
       db.auditJobUpsert.count(),
       db.auditUserUpsert.count(),
       db.auditMatchRequest.count(),
       db.auditMatchResult.count(),
       db.auditUserMatchRequest.count(),
       db.auditUserMatchResult.count(),
+      db.auditJobNotify.count(),
+      db.auditJobNotifyResult.count(),
     ]);
 
     // Get counts from last 24 hours
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const [jobsLast24h, usersLast24h, matchesLast24h, recsLast24h] = await Promise.all([
+    const [jobsLast24h, usersLast24h, matchesLast24h, recsLast24h, notifyLast24h] = await Promise.all([
       db.auditJobUpsert.count({ where: { createdAt: { gte: since } } }),
       db.auditUserUpsert.count({ where: { createdAt: { gte: since } } }),
       db.auditMatchRequest.count({ where: { createdAt: { gte: since } } }),
       db.auditUserMatchRequest.count({ where: { createdAt: { gte: since } } }),
+      db.auditJobNotify.count({ where: { createdAt: { gte: since } } }),
     ]);
 
     return {
@@ -377,12 +380,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         matchResults: resultCount,
         recommendations: recCount,
         recommendationResults: recResultCount,
+        notifications: notifyCount,
+        notificationResults: notifyResultCount,
       },
       last24Hours: {
         jobs: jobsLast24h,
         users: usersLast24h,
         matchRequests: matchesLast24h,
         recommendations: recsLast24h,
+        notifications: notifyLast24h,
       },
     };
   });
@@ -521,6 +527,159 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         results: enrichedResults,
       },
       userInfo,
+    };
+  });
+
+  // Get recent job notifications
+  fastify.get('/admin/notifications', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { limit = '20', jobId } = request.query as { limit?: string; jobId?: string };
+    const take = Math.min(parseInt(limit, 10) || 20, 100);
+
+    const where = jobId ? { jobId } : {};
+
+    const records = await db.auditJobNotify.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        jobId: true,
+        requestId: true,
+        createdAt: true,
+        title: true,
+        jobClass: true,
+        countriesFilter: true,
+        languagesFilter: true,
+        maxNotifications: true,
+        totalCandidates: true,
+        totalAboveThreshold: true,
+        notifyCount: true,
+        thresholdSpecialized: true,
+        thresholdGeneric: true,
+        scoreMin: true,
+        scoreMax: true,
+        elapsedMs: true,
+      },
+    });
+
+    logger.info(
+      { event: 'admin.notifications.query', count: records.length, jobId },
+      'Admin queried notification audit records'
+    );
+
+    return { count: records.length, records };
+  });
+
+  // Get a single notification with all user results
+  fastify.get('/admin/notifications/:notifyId', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { notifyId } = request.params as { notifyId: string };
+    const id = parseInt(notifyId, 10);
+    if (isNaN(id)) {
+      return { error: 'Invalid notification ID' };
+    }
+
+    const notifyRequest = await db.auditJobNotify.findUnique({
+      where: { id },
+      include: {
+        results: {
+          orderBy: { finalScore: 'desc' },
+        },
+      },
+    });
+
+    if (!notifyRequest) {
+      return { error: 'Notification request not found' };
+    }
+
+    // Get job info for context
+    const jobInfo = await db.auditJobUpsert.findFirst({
+      where: { jobId: notifyRequest.jobId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        title: true,
+        jobClass: true,
+        domainCapsule: true,
+        taskCapsule: true,
+        expertiseTier: true,
+        credentials: true,
+      },
+    });
+
+    // Get user info for each result
+    const userIds = notifyRequest.results.map((r) => r.userId);
+    const userInfos = await db.auditUserUpsert.findMany({
+      where: { userId: { in: userIds } },
+      distinct: ['userId'],
+      orderBy: { createdAt: 'desc' },
+      select: {
+        userId: true,
+        domainCapsule: true,
+        expertiseTier: true,
+        credentials: true,
+        country: true,
+        languages: true,
+      },
+    });
+
+    const userMap = new Map(userInfos.map((u) => [u.userId, u]));
+
+    // Enrich results with user info
+    const enrichedResults = notifyRequest.results.map((r) => ({
+      ...r,
+      userInfo: userMap.get(r.userId) || null,
+    }));
+
+    logger.info(
+      { event: 'admin.notification.detail', notifyId: id, resultsCount: notifyRequest.results.length },
+      'Admin queried notification detail'
+    );
+
+    return {
+      notifyRequest: {
+        ...notifyRequest,
+        results: enrichedResults,
+      },
+      jobInfo,
+    };
+  });
+
+  // Delete a notification request and its results
+  fastify.delete('/admin/notifications/:notifyId', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { notifyId } = request.params as { notifyId: string };
+    const id = parseInt(notifyId, 10);
+
+    if (isNaN(id)) {
+      return { error: 'Invalid notification ID' };
+    }
+
+    // Delete the notification request (results deleted via cascade)
+    const deletedNotify = await db.auditJobNotify.delete({
+      where: { id },
+    }).catch(() => null);
+
+    if (!deletedNotify) {
+      return { error: 'Notification not found' };
+    }
+
+    logger.info(
+      { event: 'admin.notification.delete', notifyId: id },
+      'Admin deleted notification request'
+    );
+
+    return {
+      status: 'ok',
+      deleted: {
+        notifyId: id,
+      },
     };
   });
 
