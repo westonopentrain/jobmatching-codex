@@ -341,3 +341,51 @@ export async function queryUsersWithSubjectMatterCodes(
 
   return matchingUserIds;
 }
+
+/**
+ * Update metadata for existing vectors without regenerating embeddings.
+ * Used for metadata-only updates (e.g., country/language changes).
+ * This is much cheaper than a full re-upsert since it skips LLM calls.
+ *
+ * @param ids - Vector IDs to update
+ * @param metadata - New metadata to merge with existing metadata
+ * @param namespace - Optional namespace
+ */
+export async function updateVectorMetadata(
+  ids: string[],
+  metadata: VectorMetadata,
+  namespace?: string
+): Promise<void> {
+  if (ids.length === 0) {
+    return;
+  }
+
+  const index = getIndex();
+
+  // Update each vector's metadata
+  // Pinecone's update method merges the provided metadata with existing metadata
+  await Promise.all(
+    ids.map((id) =>
+      withRetry(() => {
+        const updateRequest: { id: string; metadata: VectorMetadata; namespace?: string } = {
+          id,
+          metadata,
+        };
+        if (namespace) {
+          updateRequest.namespace = namespace;
+        }
+        return index.update(updateRequest);
+      }).catch((error) => {
+        if (error instanceof AppError) {
+          throw error;
+        }
+        throw new AppError({
+          code: 'PINECONE_UPDATE_FAILURE',
+          statusCode: 502,
+          message: 'Failed to update vector metadata in Pinecone',
+          details: { message: (error as Error).message, id },
+        });
+      })
+    )
+  );
+}

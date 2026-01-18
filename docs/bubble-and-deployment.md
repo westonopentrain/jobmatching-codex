@@ -175,19 +175,45 @@
 
 The Bubble application stores capsule metadata on the **User** data type using the following fields:
 
+### Capsule Data (populated from API response)
+
 | Field name              | Type | Description |
 | ----------------------- | ---- | ----------- |
 | `capsule.domain.text`   | text | Domain capsule text returned from the upsert service. |
 | `capsule.domain.vectorID` | text | Pinecone vector ID for the domain embedding. |
 | `capsule.task.text`     | text | Task capsule text returned from the upsert service. |
 | `capsule.task.vectorID` | text | Pinecone vector ID for the task embedding. |
-| `capsule.updated.at`    | date | Timestamp saved from the `updated_at` value in the API response. |
+| `capsule.updated_at`    | date | Timestamp saved from the `updated_at` value in the API response. Tracks when capsules were last synced. |
 
-Each time Bubble calls `POST /v1/users/upsert`, update these fields with the values returned in the response body. Do **not** persist embedding vectors in Bubble—vectors remain in Pinecone.
+### Stale Tracking (for debounced re-sync)
+
+| Field name              | Type    | Default | Description |
+| ----------------------- | ------- | ------- | ----------- |
+| `capsules_stale`        | yes/no  | no      | Set to `yes` when content fields change (resume, work experience, education, labeling experience). Triggers full re-upsert. |
+| `capsules_metadata_stale` | yes/no | no     | Set to `yes` when only metadata fields change (country, languages). Triggers metadata-only update (cheaper). |
+
+> **Note:** `capsule.updated_at` serves as the "last synced" timestamp. A separate `capsules_last_synced` field is redundant and not needed.
+
+Each time Bubble calls `POST /v1/users/upsert`, update the capsule fields with the values returned in the response body and clear both stale flags. Do **not** persist embedding vectors in Bubble—vectors remain in Pinecone.
+
+### Which User Fields Trigger Stale Flags
+
+| Field Changed | Set `capsules_stale` | Set `capsules_metadata_stale` |
+| ------------- | -------------------- | ----------------------------- |
+| `resume_text` | yes | no |
+| `work_experience` / `lblr_freelancerWorkExperience` | yes | no |
+| `education` / `lblr_Education` | yes | no |
+| `labeling_experience` / `lblr_LabelExperience` | yes | no |
+| `country` / `userCountry` | no | yes (only if `capsules_stale` is no) |
+| `languages` / `lblr_Languages` | no | yes (only if `capsules_stale` is no) |
+
+**Logic:** Content changes require full re-upsert (~$0.01). Metadata-only changes can use the cheaper PATCH endpoint (~$0.001).
 
 ## Bubble Job fields
 
 Jobs that operators upsert from Bubble now save the capsule metadata on the **Job** data type using these fields:
+
+### Capsule Data (populated from API response)
 
 | Field name                 | Type | Description |
 | -------------------------- | ---- | ----------- |
@@ -195,7 +221,26 @@ Jobs that operators upsert from Bubble now save the capsule metadata on the **Jo
 | `capsule_domain_vectorID`  | text | Identifier for the Pinecone domain vector returned in the upsert response. |
 | `capsule_task_text`        | text | Task capsule text returned from the job upsert response. |
 | `capsule_task_vectorID`    | text | Identifier for the Pinecone task vector returned in the upsert response. |
-| `capsule_updated_at`       | date | Timestamp copied from the `updated_at` value in the API response. |
+| `capsule_updated_at`       | date | Timestamp copied from the `updated_at` value in the API response. Tracks when capsules were last synced. |
+
+### Stale Tracking (for debounced re-sync)
+
+| Field name              | Type    | Default | Description |
+| ----------------------- | ------- | ------- | ----------- |
+| `capsules_stale`        | yes/no  | no      | Set to `yes` when content fields change (title, description, requirements). Triggers full re-upsert. |
+| `capsules_metadata_stale` | yes/no | no     | Set to `yes` when only filter fields change (countries, languages). Triggers metadata-only update (cheaper). |
+
+### Which Job Fields Trigger Stale Flags
+
+| Field Changed | Set `capsules_stale` | Set `capsules_metadata_stale` |
+| ------------- | -------------------- | ----------------------------- |
+| `Title` | yes | no |
+| `Dataset_Description` | yes | no |
+| `Data_SubjectMatter` | yes | no |
+| `LabelInstruct/Descri` / `Instructions` | yes | no |
+| `Requirements_Additional` | yes | no |
+| `AvailableCountries` | no | yes (only if `capsules_stale` is no) |
+| `AvailableLanguages` | no | yes (only if `capsules_stale` is no) |
 
 Persist only the capsule texts, vector IDs, and timestamp—embedding vectors continue to live exclusively in Pinecone.
 
@@ -413,6 +458,73 @@ Use the URL as the base endpoint for Bubble, Postman, or curl smoke tests. The S
 - `suggested_threshold`: `{ value, method, min_threshold, percentile_threshold, count_gte_suggested }`
 - `missing_jobs`: Job IDs without embeddings
 
+### Update user metadata (metadata-only, no LLM)
+
+| Property | Value |
+| -------- | ----- |
+| Name | `update_user_metadata` |
+| Use as | Action |
+| Data type | JSON |
+| Method | PATCH |
+| URL | `https://user-capsule-upsert-service.onrender.com/v1/users/<user_id>/metadata` |
+| Body type | JSON |
+
+**Body template:**
+```json
+{
+  "country": "<country>",
+  "languages": [<languages>]
+}
+```
+
+**Body parameters:**
+| Key | Description | Allow blank |
+| --- | ----------- | ----------- |
+| `user_id` | User's unique id (in URL path) | No |
+| `country` | User's country | Yes |
+| `languages` | Array of language strings | Yes |
+
+> **Note:** At least one of `country` or `languages` must be provided. This endpoint updates Pinecone vector metadata without regenerating capsules or embeddings. Cost: ~$0.001 (vs ~$0.01 for full upsert).
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "user_id": "...",
+  "updated_metadata": { "country": "...", "languages": [...] },
+  "vectors_updated": ["usr_...::domain", "usr_...::task"],
+  "elapsed_ms": 123
+}
+```
+
+### Update job metadata (metadata-only, no LLM)
+
+| Property | Value |
+| -------- | ----- |
+| Name | `update_job_metadata` |
+| Use as | Action |
+| Data type | JSON |
+| Method | PATCH |
+| URL | `https://user-capsule-upsert-service.onrender.com/v1/jobs/<job_id>/metadata` |
+| Body type | JSON |
+
+**Body template:**
+```json
+{
+  "countries": [<countries>],
+  "languages": [<languages>]
+}
+```
+
+**Body parameters:**
+| Key | Description | Allow blank |
+| --- | ----------- | ----------- |
+| `job_id` | Job's unique id (in URL path) | No |
+| `countries` | Array of country filter strings | Yes |
+| `languages` | Array of language filter strings | Yes |
+
+> **Note:** At least one of `countries` or `languages` must be provided. This endpoint updates Pinecone vector metadata without regenerating capsules or embeddings. Cost: ~$0.001.
+
 ---
 
 ## Get Recommended Jobs Workflow
@@ -489,3 +601,96 @@ After clicking the button:
 Once testing confirms the workflow works correctly:
 - Wire `get_recommended_jobs_for_user` to trigger after `upsert-capsules-user` completes
 - Or schedule it to run periodically for active users
+
+---
+
+## Debounced Re-Sync Workflow
+
+When users edit their profiles or jobs are updated, we use a debouncing pattern to avoid excessive API calls. Instead of calling the API immediately on every save, we mark records as "stale" and process them in batches.
+
+### Why Debouncing?
+
+| Scenario | Without Debouncing | With Debouncing |
+| -------- | ------------------ | --------------- |
+| User saves profile 5 times in 1 minute | 5 API calls = $0.05 | 1 API call = $0.01 |
+| User changes only country | Full upsert = $0.01 | Metadata update = $0.001 |
+
+### Cost Breakdown
+
+| Operation | Cost | When to Use |
+| --------- | ---- | ----------- |
+| Full upsert (`POST /v1/users/upsert`) | ~$0.01 | Content changes (resume, work experience, education, labeling experience) |
+| Metadata update (`PATCH /v1/users/:id/metadata`) | ~$0.001 | Only country or languages changed |
+
+### Workflow 1: Set Stale Flags on Field Changes
+
+Create database triggers or workflow events that fire when User fields change:
+
+**For content fields** (resume_text, work_experience, education, labeling_experience):
+```
+When User's [field] is changed:
+  → Make changes to User:
+    → capsules_stale = yes
+    → capsules_metadata_stale = no
+```
+
+**For metadata fields** (country, languages):
+```
+When User's country is changed:
+  → Only when: User's capsules_stale is "no"
+  → Make changes to User:
+    → capsules_metadata_stale = yes
+```
+
+> **Note:** If `capsules_stale` is already `yes`, don't set `capsules_metadata_stale` because the full upsert will update metadata anyway.
+
+### Workflow 2: Scheduled Batch Re-Sync
+
+Create a **Recurring Event** that runs every 10 minutes:
+
+**Backend Workflow:** `sync_stale_capsules`
+
+**Step 1: Process full re-upserts**
+```
+Search for Users where capsules_stale = yes (limit 50)
+For each User:
+  → Schedule API workflow: upsert-capsules-user
+  → On success: set capsules_stale = no, capsules_metadata_stale = no
+```
+
+**Step 2: Process metadata-only updates**
+```
+Search for Users where:
+  - capsules_metadata_stale = yes
+  - capsules_stale = no
+  (limit 100)
+
+For each User:
+  → Schedule API workflow: update_user_metadata
+  → On success: set capsules_metadata_stale = no
+```
+
+### Workflow 3: Backend Workflow for Metadata Update
+
+**Backend Workflow:** `update-user-metadata`
+- Endpoint name: `update-user-metadata`
+- Parameter: `User` (type: User, required)
+- Ignores privacy rules: Yes
+
+**Step 1: Call Render Service**
+- Action: "Render - Job Matching - update_user_metadata"
+- `user_id` = User's unique id
+- `country` = User's userCountry's Display
+- `languages` = User's lblr_Languages
+
+**Step 2: Clear stale flag**
+- Action: "Make changes to User..."
+- Only when: Result of step 1's status is "ok"
+- `capsules_metadata_stale` = no
+
+### Same Pattern for Jobs
+
+Apply the same debouncing pattern to Jobs:
+1. Set `capsules_stale = yes` when title/description/requirements change
+2. Set `capsules_metadata_stale = yes` when only country/language filters change
+3. Scheduled workflow processes stale jobs every 10 minutes

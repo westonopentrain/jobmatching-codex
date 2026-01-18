@@ -8,7 +8,7 @@ import { NormalizedUserProfile } from '../utils/types';
 import { generateCapsules } from '../services/capsules';
 import { classifyUser } from '../services/user-classifier';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
-import { upsertVector, deleteVectors } from '../services/pinecone';
+import { upsertVector, deleteVectors, updateVectorMetadata, VectorMetadata } from '../services/pinecone';
 import { requireEnv } from '../utils/env';
 import { auditUserUpsert } from '../services/audit';
 import { getDb, isDatabaseAvailable } from '../services/db';
@@ -372,6 +372,110 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       log.error({ err: error }, 'Unexpected error during user delete');
       const appError = new AppError({
         code: 'USER_DELETE_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // PATCH endpoint for updating user metadata only (country, languages)
+  // This is much cheaper than a full re-upsert since it skips LLM calls
+  const metadataSchema = z.object({
+    country: z.string().optional(),
+    languages: z.array(z.string()).optional(),
+  });
+
+  fastify.patch('/v1/users/:userId/metadata', async (request, reply) => {
+    const requestId = request.id as string;
+    const log = request.log.child({ route: 'users.metadata', requestId });
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { userId } = request.params as { userId: string };
+      if (!userId || typeof userId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'User ID is required',
+        });
+      }
+
+      const parsed = metadataSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Invalid request body',
+          details: { issues: parsed.error.issues },
+        });
+      }
+
+      const { country, languages } = parsed.data;
+
+      // At least one field must be provided
+      if (country === undefined && languages === undefined) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'At least one metadata field (country or languages) must be provided',
+        });
+      }
+
+      log.info({ event: 'users.metadata.start', userId, country, languages }, 'Starting user metadata update');
+
+      // Build metadata object to update
+      const metadata: VectorMetadata = {};
+      if (country !== undefined) {
+        metadata.country = sanitizeOptionalString(country) ?? '';
+      }
+      if (languages !== undefined) {
+        metadata.languages = normalizeLanguages(sanitizeStringArray(languages));
+      }
+
+      // Update both domain and task vectors
+      const domainVectorId = `usr_${userId}::domain`;
+      const taskVectorId = `usr_${userId}::task`;
+
+      await updateVectorMetadata([domainVectorId, taskVectorId], metadata);
+
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Number(elapsedMs.toFixed(2));
+
+      log.info(
+        {
+          event: 'users.metadata.complete',
+          userId,
+          updatedFields: Object.keys(metadata),
+          elapsedMs: elapsedRounded,
+        },
+        'User metadata update completed'
+      );
+
+      return reply.status(200).send({
+        status: 'ok',
+        user_id: userId,
+        updated_metadata: metadata,
+        vectors_updated: [domainVectorId, taskVectorId],
+        elapsed_ms: elapsedRounded,
+      });
+    } catch (error) {
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Number(elapsedMs.toFixed(2));
+
+      if (error instanceof AppError) {
+        log.warn(
+          { error: error.message, code: error.code, details: error.details, event: 'users.metadata.error', elapsedMs: elapsedRounded },
+          'Handled user metadata error'
+        );
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error, event: 'users.metadata.error', elapsedMs: elapsedRounded }, 'Unexpected error during user metadata update');
+      const appError = new AppError({
+        code: 'USER_METADATA_FAILURE',
         statusCode: 500,
         message: 'Unexpected server error',
       });
