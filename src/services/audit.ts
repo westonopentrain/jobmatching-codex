@@ -160,6 +160,8 @@ export function auditJobUpsert(data: JobUpsertAuditData): void {
           classificationConfidence: data.classification?.confidence ?? null,
           credentials: data.classification?.requirements?.credentials ?? [],
           subjectMatterCodes: data.classification?.requirements?.subjectMatterCodes ?? [],
+          acceptableSubjectCodes: data.classification?.requirements?.acceptableSubjectCodes ?? [],
+          subjectMatterStrictness: data.classification?.requirements?.subjectMatterStrictness ?? null,
           expertiseTier: data.classification?.requirements?.expertiseTier ?? null,
           classificationReasoning: data.classification?.reasoning ?? null,
           elapsedMs: data.elapsedMs ?? null,

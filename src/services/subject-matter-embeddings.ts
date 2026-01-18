@@ -1,4 +1,5 @@
 import { embedText } from './embeddings';
+import type { SubjectMatterStrictness } from './job-classifier';
 
 // In-memory cache: specialty → embedding vector
 const embeddingCache = new Map<string, number[]>();
@@ -9,6 +10,27 @@ export interface SemanticMatchResult {
   bestSimilarity: number;
   bestPair: { userCode: string; jobCode: string } | null;
   userCodes: string[];
+}
+
+// Threshold mapping for subject matter strictness levels
+const STRICTNESS_THRESHOLDS: Record<SubjectMatterStrictness, number> = {
+  strict: 0.80,   // Medical, legal, safety-critical - exact expertise required
+  moderate: 0.70, // Technical fields - related expertise acceptable
+  lenient: 0.60,  // General annotation - broad expertise acceptable
+};
+
+/**
+ * Get the similarity threshold for a given strictness level.
+ * @param strictness - The strictness level from job classification
+ * @returns The threshold value (0.60 - 0.80)
+ */
+export function getThresholdForStrictness(
+  strictness: SubjectMatterStrictness | undefined
+): number {
+  if (!strictness || !(strictness in STRICTNESS_THRESHOLDS)) {
+    return STRICTNESS_THRESHOLDS.moderate; // Default to moderate (0.70)
+  }
+  return STRICTNESS_THRESHOLDS[strictness];
 }
 
 // Extract specialty from code (e.g., "science:phonetics" → "phonetics")
@@ -39,13 +61,14 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot;
 }
 
-// Similarity threshold for semantic matching
-const SIMILARITY_THRESHOLD = 0.75;
+// Default similarity threshold for semantic matching (used when strictness not specified)
+const DEFAULT_SIMILARITY_THRESHOLD = 0.70;
 
 // Check if two codes match semantically
 export async function codesMatchSemantically(
   userCode: string,
-  jobCode: string
+  jobCode: string,
+  threshold: number = DEFAULT_SIMILARITY_THRESHOLD
 ): Promise<boolean> {
   const [userEmb, jobEmb] = await Promise.all([
     getSpecialtyEmbedding(userCode),
@@ -53,13 +76,14 @@ export async function codesMatchSemantically(
   ]);
 
   const similarity = cosineSimilarity(userEmb, jobEmb);
-  return similarity >= SIMILARITY_THRESHOLD;
+  return similarity >= threshold;
 }
 
 // Batch check: does user have ANY code matching ANY job code?
 export async function hasMatchingSubjectMatterCode(
   userCodes: string[],
-  jobCodes: string[]
+  jobCodes: string[],
+  threshold: number = DEFAULT_SIMILARITY_THRESHOLD
 ): Promise<boolean> {
   if (userCodes.length === 0 || jobCodes.length === 0) {
     return false;
@@ -74,7 +98,7 @@ export async function hasMatchingSubjectMatterCode(
   // Check all pairs
   for (const userEmb of userEmbeddings) {
     for (const jobEmb of jobEmbeddings) {
-      if (cosineSimilarity(userEmb, jobEmb) >= SIMILARITY_THRESHOLD) {
+      if (cosineSimilarity(userEmb, jobEmb) >= threshold) {
         return true;
       }
     }
@@ -85,7 +109,8 @@ export async function hasMatchingSubjectMatterCode(
 // Get detailed match information for debugging/audit
 export async function getSemanticMatchDetails(
   userCodes: string[],
-  jobCodes: string[]
+  jobCodes: string[],
+  threshold: number = DEFAULT_SIMILARITY_THRESHOLD
 ): Promise<SemanticMatchResult> {
   if (userCodes.length === 0) {
     return {
@@ -126,7 +151,7 @@ export async function getSemanticMatchDetails(
   }
 
   return {
-    hasMatch: bestSimilarity >= SIMILARITY_THRESHOLD,
+    hasMatch: bestSimilarity >= threshold,
     bestSimilarity,
     bestPair,
     userCodes,

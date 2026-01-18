@@ -31,6 +31,8 @@ model AuditJobUpsert {
   classificationConfidence Float?   @map("classification_confidence")
   credentials              String[] @map("credentials")
   subjectMatterCodes       String[] @map("subject_matter_codes")
+  acceptableSubjectCodes   String[] @map("acceptable_subject_codes") @default([])
+  subjectMatterStrictness  String?  @map("subject_matter_strictness")
   expertiseTier            String?  @map("expertise_tier")
   classificationReasoning  String?  @map("classification_reasoning")
 
