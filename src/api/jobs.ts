@@ -6,7 +6,7 @@ import { ensureAuthorized } from '../utils/auth';
 import { getEnv, requireEnv } from '../utils/env';
 import { EMBEDDING_DIMENSION, EMBEDDING_MODEL, embedText } from '../services/embeddings';
 import { getSemanticMatchDetails, getThresholdForStrictness, SemanticMatchResult } from '../services/subject-matter-embeddings';
-import { upsertVector, deleteVectors, fetchVectors, queryUsersByFilter, queryByVector, queryUsersWithSubjectMatterCodes } from '../services/pinecone';
+import { upsertVector, deleteVectors, fetchVectors, queryUsersByFilter, queryByVector, queryUsersWithSubjectMatterCodes, updateVectorMetadata, VectorMetadata } from '../services/pinecone';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
@@ -769,6 +769,110 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       log.error({ err: error, event: 'jobs.notify.error', elapsedMs: errorElapsedRounded }, 'Unexpected error during job notify');
       const appError = new AppError({
         code: 'JOB_NOTIFY_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // PATCH endpoint for updating job metadata only (countries, languages)
+  // This is much cheaper than a full re-upsert since it skips LLM calls
+  const jobMetadataSchema = z.object({
+    countries: z.array(z.string()).optional(),
+    languages: z.array(z.string()).optional(),
+  });
+
+  fastify.patch('/v1/jobs/:jobId/metadata', async (request, reply) => {
+    const requestId = request.id as string;
+    const log = request.log.child({ route: 'jobs.metadata', requestId });
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { jobId } = request.params as { jobId: string };
+      if (!jobId || typeof jobId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Job ID is required',
+        });
+      }
+
+      const parsed = jobMetadataSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Invalid request body',
+          details: { issues: parsed.error.issues },
+        });
+      }
+
+      const { countries, languages } = parsed.data;
+
+      // At least one field must be provided
+      if (countries === undefined && languages === undefined) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'At least one metadata field (countries or languages) must be provided',
+        });
+      }
+
+      log.info({ event: 'jobs.metadata.start', jobId, countries, languages }, 'Starting job metadata update');
+
+      // Build metadata object to update
+      const metadata: VectorMetadata = {};
+      if (countries !== undefined) {
+        metadata.countries = countries;
+      }
+      if (languages !== undefined) {
+        metadata.languages = languages;
+      }
+
+      // Update both domain and task vectors
+      const domainVectorId = `job_${jobId}::domain`;
+      const taskVectorId = `job_${jobId}::task`;
+
+      await updateVectorMetadata([domainVectorId, taskVectorId], metadata);
+
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Number(elapsedMs.toFixed(2));
+
+      log.info(
+        {
+          event: 'jobs.metadata.complete',
+          jobId,
+          updatedFields: Object.keys(metadata),
+          elapsedMs: elapsedRounded,
+        },
+        'Job metadata update completed'
+      );
+
+      return reply.status(200).send({
+        status: 'ok',
+        job_id: jobId,
+        updated_metadata: metadata,
+        vectors_updated: [domainVectorId, taskVectorId],
+        elapsed_ms: elapsedRounded,
+      });
+    } catch (error) {
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Number(elapsedMs.toFixed(2));
+
+      if (error instanceof AppError) {
+        log.warn(
+          { error: error.message, code: error.code, details: error.details, event: 'jobs.metadata.error', elapsedMs: elapsedRounded },
+          'Handled job metadata error'
+        );
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error, event: 'jobs.metadata.error', elapsedMs: elapsedRounded }, 'Unexpected error during job metadata update');
+      const appError = new AppError({
+        code: 'JOB_METADATA_FAILURE',
         statusCode: 500,
         message: 'Unexpected server error',
       });
