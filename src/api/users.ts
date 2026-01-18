@@ -10,11 +10,12 @@ import { classifyUser } from '../services/user-classifier';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
 import { upsertVector, deleteVectors, updateVectorMetadata, VectorMetadata } from '../services/pinecone';
 import { requireEnv } from '../utils/env';
-import { auditUserUpsert } from '../services/audit';
+import { auditUserUpsert, auditUserMetadataUpdate } from '../services/audit';
 import { getDb, isDatabaseAvailable } from '../services/db';
 
 const requestSchema = z.object({
   user_id: z.string().min(1),
+  source: z.string().optional(), // 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import'
   resume_text: z.string().optional(),
   work_experience: z.array(z.string()).optional(),
   education: z.array(z.string()).optional(),
@@ -250,6 +251,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       auditUserUpsert({
         userId: normalized.userId,
         requestId,
+        source: parsed.data.source,
         rawInput: bodyWithAliases as Record<string, unknown>,
         resumeChars: normalized.resumeText.length,
         hasWorkExperience: (normalized.workExperience?.length ?? 0) > 0,
@@ -382,6 +384,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   // PATCH endpoint for updating user metadata only (country, languages)
   // This is much cheaper than a full re-upsert since it skips LLM calls
   const metadataSchema = z.object({
+    source: z.string().optional(), // 'manual', 'scheduled_metadata', 'bulk_import'
     country: z.string().optional(),
     languages: z.array(z.string()).optional(),
   });
@@ -413,7 +416,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const { country, languages } = parsed.data;
+      const { source, country, languages } = parsed.data;
 
       // At least one field must be provided
       if (country === undefined && languages === undefined) {
@@ -424,7 +427,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      log.info({ event: 'users.metadata.start', userId, country, languages }, 'Starting user metadata update');
+      log.info({ event: 'users.metadata.start', userId, source, country, languages }, 'Starting user metadata update');
 
       // Build metadata object to update
       const metadata: VectorMetadata = {};
@@ -448,11 +451,22 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         {
           event: 'users.metadata.complete',
           userId,
+          source,
           updatedFields: Object.keys(metadata),
           elapsedMs: elapsedRounded,
         },
         'User metadata update completed'
       );
+
+      // Audit logging (non-blocking)
+      auditUserMetadataUpdate({
+        userId,
+        requestId,
+        source,
+        country,
+        languages,
+        elapsedMs: elapsedRounded,
+      });
 
       return reply.status(200).send({
         status: 'ok',

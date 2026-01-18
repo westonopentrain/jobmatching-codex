@@ -64,6 +64,7 @@
       <button class="tab" data-tab="matches">Matches</button>
       <button class="tab" data-tab="recommendations">Recommendations</button>
       <button class="tab" data-tab="notifications">Notifications</button>
+      <button class="tab" data-tab="sync">Sync</button>
     </nav>
 
     <!-- Tab Content -->
@@ -182,6 +183,33 @@
           <tbody></tbody>
         </table>
         <div class="loading" id="notifications-loading">Loading...</div>
+      </div>
+
+      <!-- Sync Tab -->
+      <div id="sync-tab" class="tab-pane hidden">
+        <div class="sync-health-container">
+          <div id="sync-health-stats" class="sync-health-stats">
+            <!-- Stats will be populated by JS -->
+          </div>
+          <div class="sync-tables-container">
+            <div class="sync-section">
+              <h3>Recent Syncs (Last 24h)</h3>
+              <table id="sync-recent-table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>ID</th>
+                    <th>Source</th>
+                    <th>Latency</th>
+                    <th>Time</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="loading" id="sync-loading">Loading...</div>
       </div>
     </main>
 

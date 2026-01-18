@@ -15,53 +15,59 @@ This checklist tracks the step-by-step implementation of debounced capsule re-sy
 
 ## Phase 2: API Connector Setup
 
-- [ ] **Step 5:** Add `update_user_metadata` API call (PATCH /v1/users/:user_id/metadata)
-- [ ] **Step 6:** Add `update_job_metadata` API call (PATCH /v1/jobs/:job_id/metadata)
+- [x] **Step 5:** Add `update_user_metadata` API call (PATCH /v1/users/:user_id/metadata)
+- [x] **Step 6:** Add `update_job_metadata` API call (PATCH /v1/jobs/:job_id/metadata)
 
 ---
 
 ## Phase 3: Backend Workflows
 
-- [ ] **Step 7:** Create `update-user-metadata` backend workflow
-- [ ] **Step 8:** Create `update-job-metadata` backend workflow
-- [ ] **Step 9:** Create `sync_stale_user_capsules` backend workflow (processes stale users)
-- [ ] **Step 10:** Create `sync_stale_job_capsules` backend workflow (processes stale jobs)
+- [x] **Step 7:** Create `update-user-metadata` backend workflow
+- [x] **Step 8:** Create `update-job-metadata` backend workflow
+- [x] **Step 9:** Create `sync_stale_user_capsules` backend workflow (processes stale users)
+- [x] **Step 10:** Create `sync_stale_job_capsules` backend workflow (processes stale jobs)
 
 ---
 
 ## Phase 4: Scheduled Events
 
-- [ ] **Step 11:** Create recurring event to run `sync_stale_user_capsules` every 10 minutes
-- [ ] **Step 12:** Create recurring event to run `sync_stale_job_capsules` every 10 minutes
+- [x] ~~**Step 11:** Create recurring event for jobs~~ **SKIPPED** - using event-driven approach instead
+- [x] ~~**Step 12:** Create recurring event for users~~ **SKIPPED** - using event-driven approach instead
 
 ---
 
-## Phase 5: Trigger Workflows (Set Stale Flags)
+## Phase 5: Trigger Workflows (Event-Driven for Both Users and Jobs)
 
-- [ ] **Step 13:** Add workflow to set `capsules_stale = yes` when User content fields change
-- [ ] **Step 14:** Add workflow to set `capsules_metadata_stale = yes` when User metadata fields change
-- [ ] **Step 15:** Add workflow to set `capsules_stale = yes` when Job content fields change
-- [ ] **Step 16:** Add workflow to set `capsules_metadata_stale = yes` when Job metadata fields change
+Both users and jobs use event-driven sync for immediate notifications when profiles/jobs change.
+
+### Users (Event-Driven - schedules sync with 10-min delay)
+- [x] **Step 12:** Add database trigger `user-content-changed`: When User content fields change → set `capsules_stale = yes` + schedule `upsert-capsules-user` in 10 minutes
+- [x] **Step 13:** Add database trigger `user-metadata-changed`: When User metadata fields change → set `capsules_metadata_stale = yes` + schedule `update-user-metadata` in 10 minutes
+
+### Jobs (Event-Driven - schedules sync with 10-min delay)
+- [x] **Step 14:** Add database trigger `job-content-changed`: When Job content fields change → set `capsules_stale = yes` + schedule `upsert-capsules-job` in 10 minutes
+- [x] **Step 15:** Add database trigger `job-metadata-changed`: When Job metadata fields change → set `capsules_metadata_stale = yes` + schedule `update-job-metadata` in 10 minutes
 
 ---
 
 ## Phase 6: Update Existing Workflows
 
-- [ ] **Step 17:** Update `upsert-capsules-user` to clear stale flags on success
-- [ ] **Step 18:** Update `upsert-capsules-job` (if exists) to clear stale flags on success
+- [x] **Step 16:** Update `upsert-capsules-user` to clear stale flags on success *(completed earlier)*
+- [x] **Step 17:** Update `upsert-capsules-job` to clear stale flags on success *(completed earlier)*
 
 ---
 
 ## Phase 7: Testing
 
-- [ ] **Step 19:** Test: Edit user profile content field → verify `capsules_stale` becomes `yes`
-- [ ] **Step 20:** Test: Wait for scheduled workflow → verify user gets re-upserted and flag clears
-- [ ] **Step 21:** Test: Edit user country only → verify `capsules_metadata_stale` becomes `yes`
-- [ ] **Step 22:** Test: Wait for scheduled workflow → verify metadata update runs and flag clears
+- [ ] **Step 18:** Test: Edit user profile content field → verify `capsules_stale = yes` + upsert scheduled in 10 min
+- [ ] **Step 19:** Test: Wait 10 minutes → verify user gets re-upserted and flags clear
+- [ ] **Step 20:** Test: Edit user country only → verify `capsules_metadata_stale = yes` + metadata update scheduled
+- [ ] **Step 21:** Test: Edit job content field → verify `capsules_stale = yes` + upsert scheduled in 10 min
+- [ ] **Step 22:** Test: Edit job countries/languages → verify `capsules_metadata_stale = yes` + metadata update scheduled
 
 ---
 
 ## Current Progress
 
-**Completed:** Steps 1-4 (Phase 1: Data Model Setup complete)
-**Next Step:** Step 5 (Add `update_user_metadata` API call)
+**Completed:** Steps 1-17 (Data model, API, sync workflows, upsert updates, database triggers)
+**Next Step:** Step 18 (Testing)

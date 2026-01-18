@@ -1969,6 +1969,155 @@ function switchTab(tabName) {
   else if (tabName === 'matches') loadMatches();
   else if (tabName === 'recommendations') loadRecommendations();
   else if (tabName === 'notifications') loadNotifications();
+  else if (tabName === 'sync') loadSyncHealth();
+}
+
+// Load sync health data
+async function loadSyncHealth() {
+  const loading = document.getElementById('sync-loading');
+  const statsContainer = document.getElementById('sync-health-stats');
+  const tbody = document.querySelector('#sync-recent-table tbody');
+
+  loading.classList.remove('hidden');
+  statsContainer.innerHTML = '';
+  tbody.innerHTML = '';
+
+  try {
+    const data = await apiFetch('/admin/sync-health');
+
+    loading.classList.add('hidden');
+
+    // Build stats cards
+    const last24h = data.last24h;
+    const avgLatency = data.avgLatencyMs;
+
+    let statsHtml = `
+      <div class="sync-stat-section">
+        <h4>User Upserts (24h)</h4>
+        <div class="sync-stat-grid">
+          <div class="sync-stat-card">
+            <div class="sync-stat-value">${last24h.userUpserts.total || 0}</div>
+            <div class="sync-stat-label">Total</div>
+          </div>
+          <div class="sync-stat-card ${last24h.userUpserts.scheduled_content ? 'source-scheduled' : ''}">
+            <div class="sync-stat-value">${last24h.userUpserts.scheduled_content || 0}</div>
+            <div class="sync-stat-label">Scheduled</div>
+          </div>
+          <div class="sync-stat-card ${last24h.userUpserts.manual ? 'source-manual' : ''}">
+            <div class="sync-stat-value">${last24h.userUpserts.manual || 0}</div>
+            <div class="sync-stat-label">Manual</div>
+          </div>
+          <div class="sync-stat-card">
+            <div class="sync-stat-value">${avgLatency.userUpserts?.scheduled_content || avgLatency.userUpserts?.manual || '-'}ms</div>
+            <div class="sync-stat-label">Avg Latency</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sync-stat-section">
+        <h4>Job Upserts (24h)</h4>
+        <div class="sync-stat-grid">
+          <div class="sync-stat-card">
+            <div class="sync-stat-value">${last24h.jobUpserts.total || 0}</div>
+            <div class="sync-stat-label">Total</div>
+          </div>
+          <div class="sync-stat-card ${last24h.jobUpserts.scheduled_content ? 'source-scheduled' : ''}">
+            <div class="sync-stat-value">${last24h.jobUpserts.scheduled_content || 0}</div>
+            <div class="sync-stat-label">Scheduled</div>
+          </div>
+          <div class="sync-stat-card ${last24h.jobUpserts.manual ? 'source-manual' : ''}">
+            <div class="sync-stat-value">${last24h.jobUpserts.manual || 0}</div>
+            <div class="sync-stat-label">Manual</div>
+          </div>
+          <div class="sync-stat-card">
+            <div class="sync-stat-value">${avgLatency.jobUpserts?.scheduled_content || avgLatency.jobUpserts?.manual || '-'}ms</div>
+            <div class="sync-stat-label">Avg Latency</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sync-stat-section">
+        <h4>User Metadata Updates (24h)</h4>
+        <div class="sync-stat-grid">
+          <div class="sync-stat-card">
+            <div class="sync-stat-value">${last24h.userMetadataUpdates.total || 0}</div>
+            <div class="sync-stat-label">Total</div>
+          </div>
+          <div class="sync-stat-card ${last24h.userMetadataUpdates.scheduled_metadata ? 'source-scheduled' : ''}">
+            <div class="sync-stat-value">${last24h.userMetadataUpdates.scheduled_metadata || 0}</div>
+            <div class="sync-stat-label">Scheduled</div>
+          </div>
+          <div class="sync-stat-card">
+            <div class="sync-stat-value">${avgLatency.userMetadataUpdates?.scheduled_metadata || '-'}ms</div>
+            <div class="sync-stat-label">Avg Latency</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sync-stat-section">
+        <h4>Job Metadata Updates (24h)</h4>
+        <div class="sync-stat-grid">
+          <div class="sync-stat-card">
+            <div class="sync-stat-value">${last24h.jobMetadataUpdates.total || 0}</div>
+            <div class="sync-stat-label">Total</div>
+          </div>
+          <div class="sync-stat-card ${last24h.jobMetadataUpdates.scheduled_metadata ? 'source-scheduled' : ''}">
+            <div class="sync-stat-value">${last24h.jobMetadataUpdates.scheduled_metadata || 0}</div>
+            <div class="sync-stat-label">Scheduled</div>
+          </div>
+          <div class="sync-stat-card">
+            <div class="sync-stat-value">${avgLatency.jobMetadataUpdates?.scheduled_metadata || '-'}ms</div>
+            <div class="sync-stat-label">Avg Latency</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    statsContainer.innerHTML = statsHtml;
+
+    // Populate recent syncs table
+    if (data.recentSyncs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No recent syncs found</td></tr>';
+      return;
+    }
+
+    data.recentSyncs.forEach(sync => {
+      const tr = document.createElement('tr');
+      const typeDisplay = {
+        'user_upsert': 'User Upsert',
+        'job_upsert': 'Job Upsert',
+        'user_metadata': 'User Metadata',
+        'job_metadata': 'Job Metadata'
+      }[sync.type] || sync.type;
+
+      const typeClass = {
+        'user_upsert': 'badge-entry',
+        'job_upsert': 'badge-specialized',
+        'user_metadata': 'badge-success',
+        'job_metadata': 'badge-warning'
+      }[sync.type] || '';
+
+      const sourceClass = {
+        'manual': 'badge-generic',
+        'scheduled_content': 'badge-success',
+        'scheduled_metadata': 'badge-success'
+      }[sync.source] || 'badge-warning';
+
+      const sourceDisplay = sync.source || 'unknown';
+
+      tr.innerHTML = `
+        <td><span class="badge ${typeClass}">${typeDisplay}</span></td>
+        <td><code>${escapeHtml(truncate(sync.id, 20))}</code>${sync.title ? `<br><small>${escapeHtml(truncate(sync.title, 30))}</small>` : ''}</td>
+        <td><span class="badge ${sourceClass}">${sourceDisplay}</span></td>
+        <td>${sync.elapsedMs ? sync.elapsedMs + 'ms' : '-'}</td>
+        <td>${formatDate(sync.createdAt)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    loading.textContent = 'Error loading sync health';
+    console.error('Failed to load sync health:', err);
+  }
 }
 
 // Modal

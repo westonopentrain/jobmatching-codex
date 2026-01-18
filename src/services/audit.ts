@@ -16,6 +16,7 @@ import type { Prisma } from '@prisma/client';
 export interface JobUpsertAuditData {
   jobId: string;
   requestId?: string | undefined;
+  source?: string | undefined; // 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import', 'unknown'
   title?: string | undefined;
   rawInput?: Record<string, unknown> | undefined;
   domainCapsule?: string | undefined;
@@ -29,6 +30,7 @@ export interface JobUpsertAuditData {
 export interface UserUpsertAuditData {
   userId: string;
   requestId?: string | undefined;
+  source?: string | undefined; // 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import', 'unknown'
   rawInput?: Record<string, unknown> | undefined;
   resumeChars?: number | undefined;
   hasWorkExperience?: boolean | undefined;
@@ -47,6 +49,24 @@ export interface UserUpsertAuditData {
   subjectMatterCodes?: string[] | undefined;
   yearsExperience?: number | undefined;
   classificationConfidence?: number | undefined;
+}
+
+export interface UserMetadataUpdateAuditData {
+  userId: string;
+  requestId?: string | undefined;
+  source?: string | undefined; // 'manual', 'scheduled_metadata', 'bulk_import', 'unknown'
+  country?: string | undefined;
+  languages?: string[] | undefined;
+  elapsedMs?: number | undefined;
+}
+
+export interface JobMetadataUpdateAuditData {
+  jobId: string;
+  requestId?: string | undefined;
+  source?: string | undefined; // 'manual', 'scheduled_metadata', 'bulk_import', 'unknown'
+  countries?: string[] | undefined;
+  languages?: string[] | undefined;
+  elapsedMs?: number | undefined;
 }
 
 export interface MatchRequestAuditData {
@@ -150,6 +170,7 @@ export function auditJobUpsert(data: JobUpsertAuditData): void {
         data: {
           jobId: data.jobId,
           requestId: data.requestId ?? null,
+          source: data.source ?? null,
           title: data.title ?? null,
           ...(data.rawInput ? { rawInput: data.rawInput as Prisma.InputJsonValue } : {}),
           domainCapsule: data.domainCapsule ?? null,
@@ -199,6 +220,7 @@ export function auditUserUpsert(data: UserUpsertAuditData): void {
         data: {
           userId: data.userId,
           requestId: data.requestId ?? null,
+          source: data.source ?? null,
           ...(data.rawInput ? { rawInput: data.rawInput as Prisma.InputJsonValue } : {}),
           resumeChars: data.resumeChars ?? null,
           hasWorkExperience: data.hasWorkExperience ?? null,
@@ -492,4 +514,80 @@ export function buildUserAuditData(
     validationViolations,
     elapsedMs,
   };
+}
+
+/**
+ * Log a user metadata update to the audit trail (non-blocking)
+ */
+export function auditUserMetadataUpdate(data: UserMetadataUpdateAuditData): void {
+  if (!isDatabaseAvailable()) {
+    return;
+  }
+
+  // Fire and forget
+  (async () => {
+    try {
+      const db = getDb();
+      if (!db) return;
+
+      await db.auditUserMetadataUpdate.create({
+        data: {
+          userId: data.userId,
+          requestId: data.requestId ?? null,
+          source: data.source ?? null,
+          country: data.country ?? null,
+          languages: data.languages ?? [],
+          elapsedMs: data.elapsedMs ?? null,
+        },
+      });
+
+      logger.debug(
+        { event: 'audit.user_metadata_update.saved', userId: data.userId, source: data.source },
+        'User metadata update audit record saved'
+      );
+    } catch (error) {
+      logger.error(
+        { event: 'audit.user_metadata_update.error', userId: data.userId, error },
+        'Failed to save user metadata update audit record'
+      );
+    }
+  })();
+}
+
+/**
+ * Log a job metadata update to the audit trail (non-blocking)
+ */
+export function auditJobMetadataUpdate(data: JobMetadataUpdateAuditData): void {
+  if (!isDatabaseAvailable()) {
+    return;
+  }
+
+  // Fire and forget
+  (async () => {
+    try {
+      const db = getDb();
+      if (!db) return;
+
+      await db.auditJobMetadataUpdate.create({
+        data: {
+          jobId: data.jobId,
+          requestId: data.requestId ?? null,
+          source: data.source ?? null,
+          countries: data.countries ?? [],
+          languages: data.languages ?? [],
+          elapsedMs: data.elapsedMs ?? null,
+        },
+      });
+
+      logger.debug(
+        { event: 'audit.job_metadata_update.saved', jobId: data.jobId, source: data.source },
+        'Job metadata update audit record saved'
+      );
+    } catch (error) {
+      logger.error(
+        { event: 'audit.job_metadata_update.error', jobId: data.jobId, error },
+        'Failed to save job metadata update audit record'
+      );
+    }
+  })();
 }
