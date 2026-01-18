@@ -5,6 +5,7 @@ import { AppError, toErrorResponse } from '../utils/errors';
 import { ensureAuthorized } from '../utils/auth';
 import { getEnv, requireEnv } from '../utils/env';
 import { EMBEDDING_DIMENSION, EMBEDDING_MODEL, embedText } from '../services/embeddings';
+import { getSemanticMatchDetails, SemanticMatchResult } from '../services/subject-matter-embeddings';
 import { upsertVector, deleteVectors, fetchVectors, queryUsersByFilter, queryByVector, queryUsersWithSubjectMatterCodes } from '../services/pinecone';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
@@ -13,54 +14,6 @@ import { classifyJob, getWeightProfile, JobClass } from '../services/job-classif
 import { auditJobUpsert, auditJobNotify } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
 import { logger } from '../utils/logger';
-
-// Specialty synonyms for semantic matching of subject matter codes
-// Maps specialty (after the colon) to equivalent terms
-const SPECIALTY_SYNONYMS: Record<string, string[]> = {
-  'asr': ['speech-recognition', 'speech_recognition', 'audio-transcription'],
-  'speech-recognition': ['asr', 'speech_recognition', 'audio-transcription'],
-  'audio-transcription': ['asr', 'speech-recognition', 'speech_recognition'],
-  'phonetics': ['phonetic', 'linguistics'],
-  'phonetic': ['phonetics', 'linguistics'],
-  'linguistics': ['phonetics', 'phonetic', 'transcription'],
-  'transcription': ['linguistics'],
-  'obgyn': ['gynecology', 'obstetrics'],
-  'gynecology': ['obgyn', 'obstetrics'],
-  'obstetrics': ['obgyn', 'gynecology'],
-};
-
-/**
- * Check if two specialties match semantically.
- * Matches on:
- * 1. Exact match (case-insensitive)
- * 2. Substring match (e.g., "phonetics" matches "phonetic")
- * 3. Synonym match (e.g., "asr" matches "speech-recognition")
- */
-function specialtiesMatch(a: string | undefined, b: string | undefined): boolean {
-  if (!a || !b) return false;
-  const aLower = a.toLowerCase();
-  const bLower = b.toLowerCase();
-
-  // Exact match
-  if (aLower === bLower) return true;
-
-  // Substring match (phonetics matches phonetic)
-  if (aLower.includes(bLower) || bLower.includes(aLower)) return true;
-
-  // Synonym match
-  return SPECIALTY_SYNONYMS[aLower]?.includes(bLower) ?? false;
-}
-
-/**
- * Check if a user's subject matter code matches a job's required code.
- * Compares the specialty portion (after the colon) semantically,
- * allowing for domain flexibility (e.g., science:phonetics matches language:phonetics).
- */
-function codesMatch(userCode: string, jobCode: string): boolean {
-  const userSpecialty = userCode.split(':')[1];
-  const jobSpecialty = jobCode.split(':')[1];
-  return specialtiesMatch(userSpecialty, jobSpecialty);
-}
 
 const fieldSchema = z.object({
   Instructions: z.string().optional(),
@@ -598,6 +551,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       // Filter users to only those with overlapping codes
       const jobSubjectMatterCodes = classification.requirements.subjectMatterCodes ?? [];
       const subjectMatterFilteredUserIds = new Set<string>();
+      const userMatchDetails = new Map<string, SemanticMatchResult>();
 
       if (jobSubjectMatterCodes.length > 0 && qualifiedUsers.length > 0) {
         log.info(
@@ -607,25 +561,33 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
             jobSubjectMatterCodes,
             candidatesBeforeFilter: qualifiedUsers.length,
           },
-          'Starting subject matter code filtering'
+          'Starting subject matter code filtering (semantic embeddings)'
         );
 
-        // Filter using metadata we already have (more efficient than Pinecone query)
-        const jobCodesSet = new Set(jobSubjectMatterCodes);
         const usersBeforeFilter = qualifiedUsers.length;
 
-        qualifiedUsers = qualifiedUsers.filter((u) => {
-          const metadata = userMetadataMap.get(u.userId) as Record<string, unknown> | undefined;
-          const userCodes = (metadata?.subject_matter_codes as string[]) ?? [];
-          // User must have at least ONE matching code (semantic matching by specialty)
-          const hasMatchingCode = userCodes.some((userCode) =>
-            Array.from(jobCodesSet).some((jobCode) => codesMatch(userCode, jobCode))
-          );
-          if (!hasMatchingCode) {
-            subjectMatterFilteredUserIds.add(u.userId);
+        // Use embedding-based semantic matching for subject matter codes
+        // This replaces hardcoded synonym mappings with real semantic similarity
+        const semanticFilterResults = await Promise.all(
+          qualifiedUsers.map(async (u) => {
+            const metadata = userMetadataMap.get(u.userId) as Record<string, unknown> | undefined;
+            const userCodes = (metadata?.subject_matter_codes as string[]) ?? [];
+            const matchDetails = await getSemanticMatchDetails(userCodes, jobSubjectMatterCodes);
+            userMatchDetails.set(u.userId, matchDetails);
+            return { user: u, matchDetails };
+          })
+        );
+
+        // Track filtered users and update qualified list
+        for (const result of semanticFilterResults) {
+          if (!result.matchDetails.hasMatch) {
+            subjectMatterFilteredUserIds.add(result.user.userId);
           }
-          return hasMatchingCode;
-        });
+        }
+
+        qualifiedUsers = semanticFilterResults
+          .filter((r) => r.matchDetails.hasMatch)
+          .map((r) => r.user);
 
         log.info(
           {
@@ -636,7 +598,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
             candidatesAfterFilter: qualifiedUsers.length,
             filteredOut: usersBeforeFilter - qualifiedUsers.length,
           },
-          'Subject matter code filtering complete'
+          'Subject matter code filtering complete (semantic embeddings)'
         );
       }
 
@@ -649,12 +611,25 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       // Build audit results with filter reasons
       const auditResults = scoredUsers.map((u, index) => {
         const metadata = userMetadataMap.get(u.userId) as Record<string, unknown> | undefined;
+        const userSubjectMatterCodes = (metadata?.subject_matter_codes as string[]) ?? [];
         let filterReason: string | null = null;
 
         if (!u.aboveThreshold) {
           filterReason = `below_threshold (${(u.threshold * 100).toFixed(0)}%)`;
         } else if (subjectMatterFilteredUserIds.has(u.userId)) {
-          filterReason = `missing_subject_matter (${jobSubjectMatterCodes.join(', ')})`;
+          // Get detailed match info for better debugging
+          const matchDetails = userMatchDetails.get(u.userId);
+          if (!matchDetails || matchDetails.userCodes.length === 0) {
+            // User has no subject matter codes
+            filterReason = `no_subject_matter_codes`;
+          } else if (matchDetails.bestSimilarity > 0) {
+            // User had codes but similarity was too low
+            const similarityPct = Math.round(matchDetails.bestSimilarity * 100);
+            filterReason = `low_similarity (${similarityPct}%)`;
+          } else {
+            // Fallback
+            filterReason = `missing_subject_matter (${jobSubjectMatterCodes.join(', ')})`;
+          }
         } else if (!notifiedUserIds.has(u.userId)) {
           filterReason = 'max_cap';
         }
@@ -663,6 +638,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
           userId: u.userId,
           userCountry: (metadata?.country as string) ?? null,
           userLanguages: (metadata?.languages as string[]) ?? [],
+          userSubjectMatterCodes,
           expertiseTier: u.expertiseTier ?? null,
           domainScore: u.domainScore,
           taskScore: u.taskScore,
