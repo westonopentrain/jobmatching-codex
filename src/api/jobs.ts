@@ -34,7 +34,7 @@ const fieldSchema = z.object({
 
 const jobUpsertSchema = z.object({
   job_id: z.string().min(1),
-  source: z.string().optional(), // 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import'
+  source: z.string().nullable().optional(), // 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import'
   title: z.string().optional(),
   fields: fieldSchema,
 });
@@ -42,7 +42,7 @@ const jobUpsertSchema = z.object({
 // Schema for /v1/jobs/notify - find users to notify about a new job
 const jobNotifySchema = z.object({
   job_id: z.string().min(1),
-  source: z.string().optional(), // 'manual', 'scheduled_content', 'bulk_import'
+  source: z.string().nullable().optional(), // 'manual', 'scheduled_content', 'bulk_import'
   title: z.string().optional(),
   fields: fieldSchema,
   // Country/language filters - users must match at least one of each
@@ -198,7 +198,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       auditJobUpsert({
         jobId: normalized.jobId,
         requestId,
-        source: parsed.data.source,
+        source: parsed.data.source ?? undefined,
         title: normalized.title,
         rawInput: normalized as unknown as Record<string, unknown>,
         domainCapsule: capsules.domain.text,
@@ -412,7 +412,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       auditJobUpsert({
         jobId: normalized.jobId,
         requestId,
-        source: parsed.data.source,
+        source: parsed.data.source ?? undefined,
         title: normalized.title,
         rawInput: normalized as unknown as Record<string, unknown>,
         domainCapsule: capsules.domain.text,
@@ -783,7 +783,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
   // PATCH endpoint for updating job metadata only (countries, languages)
   // This is much cheaper than a full re-upsert since it skips LLM calls
   const jobMetadataSchema = z.object({
-    source: z.string().optional(), // 'manual', 'scheduled_metadata', 'bulk_import'
+    source: z.string().nullable().optional(), // 'manual', 'scheduled_metadata', 'bulk_import'
     countries: z.array(z.string()).optional(),
     languages: z.array(z.string()).optional(),
   });
@@ -861,7 +861,7 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       auditJobMetadataUpdate({
         jobId,
         requestId,
-        source,
+        source: source ?? undefined,
         countries,
         languages,
         elapsedMs: elapsedRounded,

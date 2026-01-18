@@ -15,7 +15,7 @@ import { getDb, isDatabaseAvailable } from '../services/db';
 
 const requestSchema = z.object({
   user_id: z.string().min(1),
-  source: z.string().optional(), // 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import'
+  source: z.string().nullable().optional(), // 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import'
   resume_text: z.string().optional(),
   work_experience: z.array(z.string()).optional(),
   education: z.array(z.string()).optional(),
@@ -251,7 +251,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       auditUserUpsert({
         userId: normalized.userId,
         requestId,
-        source: parsed.data.source,
+        source: parsed.data.source ?? undefined,
         rawInput: bodyWithAliases as Record<string, unknown>,
         resumeChars: normalized.resumeText.length,
         hasWorkExperience: (normalized.workExperience?.length ?? 0) > 0,
@@ -384,7 +384,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   // PATCH endpoint for updating user metadata only (country, languages)
   // This is much cheaper than a full re-upsert since it skips LLM calls
   const metadataSchema = z.object({
-    source: z.string().optional(), // 'manual', 'scheduled_metadata', 'bulk_import'
+    source: z.string().nullable().optional(), // 'manual', 'scheduled_metadata', 'bulk_import'
     country: z.string().optional(),
     languages: z.array(z.string()).optional(),
   });
@@ -462,7 +462,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       auditUserMetadataUpdate({
         userId,
         requestId,
-        source,
+        source: source ?? undefined,
         country,
         languages,
         elapsedMs: elapsedRounded,
