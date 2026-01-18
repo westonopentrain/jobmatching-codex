@@ -67,7 +67,31 @@ Both users and jobs use event-driven sync for immediate notifications when profi
 
 ---
 
+## Phase 8: Pre-Deployment Tasks
+
+These tasks need to be completed before going live:
+
+- [ ] **Step 23:** Wire up new job creation to call `upsert-capsules-job` with `source: "new_job"`
+- [ ] **Step 24:** Wire up new user signup to call `upsert-capsules-user` with `source: "new_user"`
+
+---
+
+## Sync Source Values Reference
+
+| Trigger | Source Value | Status |
+|---------|--------------|--------|
+| `job-content-changed` trigger | `"scheduled_content"` | ✅ Done |
+| `job-metadata-changed` trigger | `"scheduled_metadata"` | ✅ Done |
+| `user-content-changed` trigger | `"scheduled_content"` | ✅ Done |
+| `user-metadata-changed` trigger | `"scheduled_metadata"` | ✅ Done |
+| Manual "Upsert" button for jobs | `"manual"` | ✅ Done |
+| Manual "Upsert" button for users | `"manual"` | ✅ Done |
+| New job posted on platform | `"new_job"` | ⏳ Pre-deployment |
+| New user signs up | `"new_user"` | ⏳ Pre-deployment |
+
+---
+
 ## Current Progress
 
 **Completed:** Steps 1-17 (Data model, API, sync workflows, upsert updates, database triggers)
-**Next Step:** Step 18 (Testing)
+**Next Step:** Step 18 (Testing) or Step 23-24 (Pre-deployment wiring)
