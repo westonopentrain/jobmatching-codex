@@ -606,14 +606,14 @@ Once testing confirms the workflow works correctly:
 
 ## Debounced Re-Sync Workflow
 
-When users edit their profiles or jobs are updated, we use a debouncing pattern to avoid excessive API calls. Instead of calling the API immediately on every save, we mark records as "stale" and process them in batches.
+When users edit their profiles or jobs are updated, we use an **event-driven debouncing** pattern. Instead of polling for stale records, we schedule a sync workflow to run X minutes after the edit. This provides true debouncing while enabling immediate notifications when changes are made.
 
-### Why Debouncing?
+### Why Event-Driven Debouncing?
 
-| Scenario | Without Debouncing | With Debouncing |
-| -------- | ------------------ | --------------- |
-| User saves profile 5 times in 1 minute | 5 API calls = $0.05 | 1 API call = $0.01 |
-| User changes only country | Full upsert = $0.01 | Metadata update = $0.001 |
+| Approach | How It Works | Pros | Cons |
+| -------- | ------------ | ---- | ---- |
+| **Scheduled polling** | Search for stale records every 10 min | Simple | Wastes WU on empty searches; delays up to 10 min |
+| **Event-driven** (chosen) | Schedule sync X min after each edit | No wasted searches; predictable delay; enables immediate notifications | Slightly more complex triggers |
 
 ### Cost Breakdown
 
@@ -622,75 +622,423 @@ When users edit their profiles or jobs are updated, we use a debouncing pattern 
 | Full upsert (`POST /v1/users/upsert`) | ~$0.01 | Content changes (resume, work experience, education, labeling experience) |
 | Metadata update (`PATCH /v1/users/:id/metadata`) | ~$0.001 | Only country or languages changed |
 
-### Workflow 1: Set Stale Flags on Field Changes
+### Event-Driven Trigger Workflows
 
-Create database triggers or workflow events that fire when User fields change:
+Both users and jobs use the same pattern:
+1. When fields change → set stale flag + schedule sync workflow in 5 minutes
+2. The stale flag prevents duplicate scheduling (only schedule if not already stale)
+3. The sync workflow clears the stale flag on success
 
-**For content fields** (resume_text, work_experience, education, labeling_experience):
+#### User Content Changes
+
+**Trigger:** When User's content field changes (resume_text, work_experience, education, labeling_experience)
+
 ```
 When User's [field] is changed:
+  → Only when: User's capsules_stale is "no"
   → Make changes to User:
     → capsules_stale = yes
     → capsules_metadata_stale = no
+  → Schedule API workflow: upsert-capsules-user
+    → user: This User
+    → Scheduled date: Current date/time + 5 minutes
 ```
 
-**For metadata fields** (country, languages):
+#### User Metadata Changes
+
+**Trigger:** When User's metadata field changes (country, languages)
+
 ```
-When User's country is changed:
-  → Only when: User's capsules_stale is "no"
+When User's country/languages is changed:
+  → Only when: User's capsules_stale is "no" AND User's capsules_metadata_stale is "no"
   → Make changes to User:
     → capsules_metadata_stale = yes
+  → Schedule API workflow: update-user-metadata
+    → user: This User
+    → Scheduled date: Current date/time + 5 minutes
 ```
 
-> **Note:** If `capsules_stale` is already `yes`, don't set `capsules_metadata_stale` because the full upsert will update metadata anyway.
+> **Note:** Don't schedule metadata update if `capsules_stale` is already `yes` - the full upsert will handle it.
 
-### Workflow 2: Scheduled Batch Re-Sync
+#### Job Content Changes
 
-Create a **Recurring Event** that runs every 10 minutes:
+**Trigger:** When Job's content field changes (Title, Dataset_Description, Data_SubjectMatter, Instructions, Requirements_Additional)
 
-**Backend Workflow:** `sync_stale_capsules`
-
-**Step 1: Process full re-upserts**
 ```
-Search for Users where capsules_stale = yes (limit 50)
-For each User:
-  → Schedule API workflow: upsert-capsules-user
-  → On success: set capsules_stale = no, capsules_metadata_stale = no
-```
-
-**Step 2: Process metadata-only updates**
-```
-Search for Users where:
-  - capsules_metadata_stale = yes
-  - capsules_stale = no
-  (limit 100)
-
-For each User:
-  → Schedule API workflow: update_user_metadata
-  → On success: set capsules_metadata_stale = no
+When Job's [field] is changed:
+  → Only when: Job's capsules_stale is "no"
+  → Make changes to Job:
+    → capsules_stale = yes
+    → capsules_metadata_stale = no
+  → Schedule API workflow: upsert-capsules-job
+    → job: This Job
+    → Scheduled date: Current date/time + 5 minutes
 ```
 
-### Workflow 3: Backend Workflow for Metadata Update
+#### Job Metadata Changes
 
-**Backend Workflow:** `update-user-metadata`
+**Trigger:** When Job's metadata field changes (AvailableCountries, AvailableLanguages)
+
+```
+When Job's countries/languages is changed:
+  → Only when: Job's capsules_stale is "no" AND Job's capsules_metadata_stale is "no"
+  → Make changes to Job:
+    → capsules_metadata_stale = yes
+  → Schedule API workflow: update-job-metadata
+    → job: This Job
+    → Scheduled date: Current date/time + 5 minutes
+```
+
+### Why This Enables Real-Time Notifications
+
+When a job is edited (e.g., a new language is added), the 5-minute debounce ensures:
+1. Multiple rapid edits only trigger one sync
+2. The sync completes within a predictable window
+3. After sync, newly-qualified users can be notified immediately
+
+---
+
+## Implemented Backend Workflows Reference
+
+### sync_stale_user_capsules (Fallback)
+
+**Purpose:** Fallback workflow to process stale user records that weren't caught by event-driven triggers. Can be called manually or by an optional recurring scheduled event for cleanup.
+
+> **Note:** With event-driven triggers in place, this workflow is rarely needed. It serves as a safety net for records that may have been missed.
+
+**Configuration:**
+- Endpoint name: `sync_stale_user_capsules`
+- Parameters: None
+- Ignore privacy rules: Yes
+
+**Step 1: Schedule API Workflow upsert-capsules-user on a list**
+- Type of things: User
+- List to run on: `Search for Users where capsules_stale = yes :items until #50`
+- API Workflow: `upsert-capsules-user`
+- User: This User
+- Scheduled date: Current date/time
+
+**Step 2: Schedule API Workflow update-user-metadata on a list**
+- Type of things: User
+- List to run on: `Search for Users where capsules_metadata_stale = yes AND capsules_stale = no :items until #100`
+- API Workflow: `update-user-metadata`
+- user: This User
+- Scheduled date: Current date/time
+
+---
+
+### update-user-metadata
+
+**Purpose:** Updates user metadata in Pinecone without regenerating capsules (cheap ~$0.001).
+
+**Configuration:**
 - Endpoint name: `update-user-metadata`
-- Parameter: `User` (type: User, required)
-- Ignores privacy rules: Yes
+- Parameter: `user` (type: User)
+- Ignore privacy rules: Yes
 
-**Step 1: Call Render Service**
-- Action: "Render - Job Matching - update_user_metadata"
-- `user_id` = User's unique id
-- `country` = User's userCountry's Display
-- `languages` = User's lblr_Languages
+**Step 1: Render - Job Matching - update_user_metadata**
+- user_id: `user's unique id`
+- country: `user's userCountry's Display`
+- languages: `user's lblr_Languages:each item's Language Type:format as text` (content: `"This Language Type_OS's Display"`, delimiter: `,`)
 
-**Step 2: Clear stale flag**
-- Action: "Make changes to User..."
-- Only when: Result of step 1's status is "ok"
-- `capsules_metadata_stale` = no
+**Step 2: Make changes to User**
+- Thing to change: `user`
+- Only when: `Result of step 1's status is "ok"`
+- capsules_metadata_stale: `no`
 
-### Same Pattern for Jobs
+---
 
-Apply the same debouncing pattern to Jobs:
-1. Set `capsules_stale = yes` when title/description/requirements change
-2. Set `capsules_metadata_stale = yes` when only country/language filters change
-3. Scheduled workflow processes stale jobs every 10 minutes
+### update-job-metadata
+
+**Purpose:** Updates job metadata in Pinecone without regenerating capsules (cheap ~$0.001).
+
+**Configuration:**
+- Endpoint name: `update-job-metadata`
+- Parameter: `job` (type: Job)
+- Ignore privacy rules: Yes
+
+**Step 1: Render - Job Matching - update_job_metadata**
+- job_id: `job's unique id`
+- countries: `job's AvailableCountries:format as text` (content: `"This Countries_OS's Display"`, delimiter: `,`)
+- languages: `job's AvailableLanguages:format as text` (content: `"This Language Type_OS's Display"`, delimiter: `,`)
+
+**Step 2: Make changes to Job**
+- Thing to change: `job`
+- Only when: `Result of step 1's status is "ok"`
+- capsules_metadata_stale: `no`
+
+---
+
+### upsert-capsules-user (Updated)
+
+**Added fields to Step 2 (Make changes to User):**
+- capsules_stale: `no`
+- capsules_metadata_stale: `no`
+
+These fields are cleared after a successful full upsert.
+
+---
+
+### upsert-capsules-job (Updated)
+
+**Added fields to Step 2 (Make changes to Job):**
+- capsules_stale: `no`
+- capsules_metadata_stale: `no`
+
+These fields are cleared after a successful full upsert.
+
+---
+
+### sync_stale_job_capsules (Fallback)
+
+**Purpose:** Fallback workflow to process stale job records that weren't caught by event-driven triggers. Can be called manually or by an optional recurring scheduled event for cleanup.
+
+> **Note:** With event-driven triggers in place, this workflow is rarely needed. It serves as a safety net for records that may have been missed.
+
+**Configuration:**
+- Endpoint name: `sync_stale_job_capsules`
+- Parameters: None
+- Ignore privacy rules: Yes
+
+**Step 1: Schedule API Workflow upsert-capsules-job on a list**
+- Type of things: Job
+- List to run on: `Search for Jobs where capsules_stale = yes :items until #50`
+- API Workflow: `upsert-capsules-job`
+- job: This Job
+- Scheduled date: Current date/time
+
+**Step 2: Schedule API Workflow update-job-metadata on a list**
+- Type of things: Job
+- List to run on: `Search for Jobs where capsules_metadata_stale = yes AND capsules_stale = no :items until #50`
+- API Workflow: `update-job-metadata`
+- job: This Job
+- Scheduled date: Current date/time
+
+---
+
+## Database Trigger Events (Event-Driven Sync)
+
+These database triggers automatically fire when records are modified, providing real-time sync with a 10-minute debounce window.
+
+### user-content-changed
+
+**Purpose:** Triggers a full user re-upsert when profile content changes.
+
+**Configuration:**
+- Event type: Database trigger event → A thing is modified
+- Type: `User`
+- Only when:
+  ```
+  User before change's capsules_stale is "no"
+  and (
+    (User before change's resume_text is not User now's resume_text)
+    or (User before change's lblr_freelancerWorkExperience:count is not User now's lblr_freelancerWorkExperience:count)
+    or (User before change's lblr_Education:count is not User now's lblr_Education:count)
+    or (User before change's lblr_LabelExperience:count is not User now's lblr_LabelExperience:count)
+  )
+  ```
+
+**Step 1: Make changes to User**
+- Thing to change: `User now`
+- capsules_stale: `yes`
+- capsules_metadata_stale: `no`
+
+**Step 2: Schedule API Workflow**
+- API Workflow: `upsert-capsules-user`
+- user: `User now`
+- Scheduled date: `Current date/time + minutes: 10`
+
+---
+
+### user-metadata-changed
+
+**Purpose:** Triggers a metadata-only update when only country/languages change (cheaper than full upsert).
+
+**Configuration:**
+- Event type: Database trigger event → A thing is modified
+- Type: `User`
+- Only when:
+  ```
+  User before change's capsules_stale is "no"
+  and User before change's capsules_metadata_stale is "no"
+  and (
+    (User before change's userCountry is not User now's userCountry)
+    or (User before change's lblr_Languages:each item's Language Type's Display:format as text
+        is not User now's lblr_Languages:each item's Language Type's Display:format as text)
+  )
+  ```
+
+**Step 1: Make changes to User**
+- Thing to change: `User now`
+- capsules_metadata_stale: `yes`
+
+**Step 2: Schedule API Workflow**
+- API Workflow: `update-user-metadata`
+- user: `User now`
+- Scheduled date: `Current date/time + minutes: 10`
+
+---
+
+### job-content-changed
+
+**Purpose:** Triggers a full job re-upsert when job content changes.
+
+**Configuration:**
+- Event type: Database trigger event → A thing is modified
+- Type: `Job`
+- Only when:
+  ```
+  Job before change's capsules_stale is "no"
+  and (
+    (Job before change's Title is not Job now's Title)
+    or (Job before change's Dataset Description is not Job now's Dataset Description)
+    or (Job before change's Data_SubjectMatter is not Job now's Data_SubjectMatter)
+    or (Job before change's LabelInstruct/Descri is not Job now's LabelInstruct/Descri)
+    or (Job before change's Requirements_Additional is not Job now's Requirements_Additional)
+  )
+  ```
+
+**Step 1: Make changes to Job**
+- Thing to change: `Job now`
+- capsules_stale: `yes`
+- capsules_metadata_stale: `no`
+
+**Step 2: Schedule API Workflow**
+- API Workflow: `upsert-capsules-job`
+- job: `Job now`
+- Scheduled date: `Current date/time + minutes: 10`
+
+---
+
+### job-metadata-changed
+
+**Purpose:** Triggers a metadata-only update when only countries/languages filters change.
+
+**Configuration:**
+- Event type: Database trigger event → A thing is modified
+- Type: `Job`
+- Only when:
+  ```
+  Job before change's capsules_stale is "no"
+  and Job before change's capsules_metadata_stale is "no"
+  and (
+    (Job before change's AvailableCountries:each item's Display:format as text
+        is not Job now's AvailableCountries:each item's Display:format as text)
+    or (Job before change's AvailableLanguages:each item's Display:format as text
+        is not Job now's AvailableLanguages:each item's Display:format as text)
+  )
+  ```
+
+**Step 1: Make changes to Job**
+- Thing to change: `Job now`
+- capsules_metadata_stale: `yes`
+
+**Step 2: Schedule API Workflow**
+- API Workflow: `update-job-metadata`
+- job: `Job now`
+- Scheduled date: `Current date/time + minutes: 10`
+
+---
+
+## How Event-Driven Sync Works
+
+1. **User/Job is modified** in Bubble (from any source - profile page, admin, API)
+2. **Database trigger fires** and checks if the change affects capsules
+3. **Stale flag is set** to prevent duplicate scheduling
+4. **Sync workflow is scheduled** for 10 minutes in the future (debouncing)
+5. **After 10 minutes**, the scheduled workflow runs:
+   - Calls the appropriate API endpoint (upsert or metadata-only)
+   - Clears the stale flag on success
+6. **If more edits happen** within 10 minutes, they don't schedule new workflows (stale flag is already set)
+
+This provides true debouncing while enabling immediate notifications after changes settle.
+
+---
+
+## Monitoring & Debugging Event-Driven Sync
+
+### Source Tracking Parameter
+
+All upsert and metadata update endpoints now accept an optional `source` parameter to track where each sync originated. This enables distinguishing between manual operations and scheduled syncs in the admin dashboard.
+
+**Valid source values:**
+| Source | Description |
+| ------ | ----------- |
+| `manual` | User clicked a manual upsert button in Bubble |
+| `scheduled_content` | From `user-content-changed` or `job-content-changed` trigger |
+| `scheduled_metadata` | From `user-metadata-changed` or `job-metadata-changed` trigger |
+| `bulk_import` | Migration or bulk import scripts |
+
+### Updating Bubble Workflows to Pass Source
+
+#### upsert-capsules-user
+
+Add parameter: `source` (text, optional, default: "manual")
+
+**Step 1 body (API call) becomes:**
+```json
+{
+  "user_id": "<User's unique id>",
+  "source": "<source parameter>",
+  "resume_text": "<User's resume_text>",
+  ...
+}
+```
+
+The `user-content-changed` database trigger's Step 2 should pass: `source: "scheduled_content"`
+
+#### update-user-metadata
+
+Add parameter: `source` (text, optional, default: "manual")
+
+**Step 1 body (API call) becomes:**
+```json
+{
+  "source": "<source parameter>",
+  "country": "<country>",
+  "languages": [<languages>]
+}
+```
+
+The `user-metadata-changed` database trigger's Step 2 should pass: `source: "scheduled_metadata"`
+
+#### upsert-capsules-job and update-job-metadata
+
+Same pattern - add `source` parameter and pass appropriate value from triggers.
+
+### Admin Dashboard Sync Tab
+
+The admin dashboard at `/dashboard` now includes a **Sync** tab that shows:
+
+1. **Last 24h Stats by Source**
+   - User upserts: total, scheduled, manual
+   - Job upserts: total, scheduled, manual
+   - User metadata updates: total, scheduled
+   - Job metadata updates: total, scheduled
+   - Average latency per operation type
+
+2. **Recent Syncs**
+   - Chronological view of all sync activity
+   - Type (user_upsert, job_upsert, user_metadata, job_metadata)
+   - Source (manual, scheduled_content, scheduled_metadata)
+   - Latency
+   - Timestamp
+
+### Verifying Event-Driven Sync
+
+1. **Test manual upsert:** Click upsert button → check Sync tab → verify `source: "manual"`
+2. **Test scheduled sync:** Edit user profile → wait 10 min → check Sync tab → verify `source: "scheduled_content"`
+3. **Test metadata update:** Change user country → wait 10 min → check new entry with `source: "scheduled_metadata"`
+
+### Render Logs
+
+Structured logs now include the source field for easy filtering:
+
+```
+{"level":30,"time":1705600000,"event":"upsert.complete","userId":"abc123","source":"scheduled_content","elapsedMs":2340}
+```
+
+Filter in Render dashboard:
+- `source":"scheduled_content"` - see all scheduled content syncs
+- `source":"scheduled_metadata"` - see all scheduled metadata syncs
+- `source":"manual"` - see manual operations

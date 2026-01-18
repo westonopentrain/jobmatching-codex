@@ -726,4 +726,222 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
     };
   });
+
+  // Get sync health metrics for monitoring event-driven sync
+  fastify.get('/admin/sync-health', async () => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    // Get counts by source for the last 24 hours
+    const [userUpsertsBySource, jobUpsertsBySource, userMetadataUpdates, jobMetadataUpdates] = await Promise.all([
+      // User upserts grouped by source
+      db.auditUserUpsert.groupBy({
+        by: ['source'],
+        where: { createdAt: { gte: since } },
+        _count: { id: true },
+      }),
+      // Job upserts grouped by source
+      db.auditJobUpsert.groupBy({
+        by: ['source'],
+        where: { createdAt: { gte: since } },
+        _count: { id: true },
+      }),
+      // User metadata updates grouped by source
+      db.auditUserMetadataUpdate.groupBy({
+        by: ['source'],
+        where: { createdAt: { gte: since } },
+        _count: { id: true },
+      }),
+      // Job metadata updates grouped by source
+      db.auditJobMetadataUpdate.groupBy({
+        by: ['source'],
+        where: { createdAt: { gte: since } },
+        _count: { id: true },
+      }),
+    ]);
+
+    // Convert group results to source-keyed objects
+    const userUpsertCounts: Record<string, number> = {};
+    let userUpsertTotal = 0;
+    for (const group of userUpsertsBySource) {
+      const source = group.source || 'unknown';
+      userUpsertCounts[source] = group._count.id;
+      userUpsertTotal += group._count.id;
+    }
+
+    const jobUpsertCounts: Record<string, number> = {};
+    let jobUpsertTotal = 0;
+    for (const group of jobUpsertsBySource) {
+      const source = group.source || 'unknown';
+      jobUpsertCounts[source] = group._count.id;
+      jobUpsertTotal += group._count.id;
+    }
+
+    const userMetadataCounts: Record<string, number> = {};
+    let userMetadataTotal = 0;
+    for (const group of userMetadataUpdates) {
+      const source = group.source || 'unknown';
+      userMetadataCounts[source] = group._count.id;
+      userMetadataTotal += group._count.id;
+    }
+
+    const jobMetadataCounts: Record<string, number> = {};
+    let jobMetadataTotal = 0;
+    for (const group of jobMetadataUpdates) {
+      const source = group.source || 'unknown';
+      jobMetadataCounts[source] = group._count.id;
+      jobMetadataTotal += group._count.id;
+    }
+
+    // Get average latencies by source
+    const [userUpsertLatencies, jobUpsertLatencies, userMetadataLatencies, jobMetadataLatencies] = await Promise.all([
+      db.auditUserUpsert.groupBy({
+        by: ['source'],
+        where: { createdAt: { gte: since }, elapsedMs: { not: null } },
+        _avg: { elapsedMs: true },
+      }),
+      db.auditJobUpsert.groupBy({
+        by: ['source'],
+        where: { createdAt: { gte: since }, elapsedMs: { not: null } },
+        _avg: { elapsedMs: true },
+      }),
+      db.auditUserMetadataUpdate.groupBy({
+        by: ['source'],
+        where: { createdAt: { gte: since }, elapsedMs: { not: null } },
+        _avg: { elapsedMs: true },
+      }),
+      db.auditJobMetadataUpdate.groupBy({
+        by: ['source'],
+        where: { createdAt: { gte: since }, elapsedMs: { not: null } },
+        _avg: { elapsedMs: true },
+      }),
+    ]);
+
+    const avgLatencies = {
+      userUpserts: Object.fromEntries(
+        userUpsertLatencies.map((g) => [g.source || 'unknown', Math.round(g._avg.elapsedMs ?? 0)])
+      ),
+      jobUpserts: Object.fromEntries(
+        jobUpsertLatencies.map((g) => [g.source || 'unknown', Math.round(g._avg.elapsedMs ?? 0)])
+      ),
+      userMetadataUpdates: Object.fromEntries(
+        userMetadataLatencies.map((g) => [g.source || 'unknown', Math.round(g._avg.elapsedMs ?? 0)])
+      ),
+      jobMetadataUpdates: Object.fromEntries(
+        jobMetadataLatencies.map((g) => [g.source || 'unknown', Math.round(g._avg.elapsedMs ?? 0)])
+      ),
+    };
+
+    // Get recent syncs (mixed view of all activity)
+    const [recentUserUpserts, recentJobUpserts, recentUserMetadata, recentJobMetadata] = await Promise.all([
+      db.auditUserUpsert.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          userId: true,
+          source: true,
+          elapsedMs: true,
+          createdAt: true,
+        },
+      }),
+      db.auditJobUpsert.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          jobId: true,
+          title: true,
+          source: true,
+          elapsedMs: true,
+          createdAt: true,
+        },
+      }),
+      db.auditUserMetadataUpdate.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          userId: true,
+          source: true,
+          elapsedMs: true,
+          createdAt: true,
+        },
+      }),
+      db.auditJobMetadataUpdate.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          jobId: true,
+          source: true,
+          elapsedMs: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    // Combine and sort recent syncs
+    const recentSyncs = [
+      ...recentUserUpserts.map((r) => ({
+        type: 'user_upsert' as const,
+        id: r.userId,
+        source: r.source,
+        elapsedMs: r.elapsedMs,
+        createdAt: r.createdAt,
+      })),
+      ...recentJobUpserts.map((r) => ({
+        type: 'job_upsert' as const,
+        id: r.jobId,
+        title: r.title,
+        source: r.source,
+        elapsedMs: r.elapsedMs,
+        createdAt: r.createdAt,
+      })),
+      ...recentUserMetadata.map((r) => ({
+        type: 'user_metadata' as const,
+        id: r.userId,
+        source: r.source,
+        elapsedMs: r.elapsedMs,
+        createdAt: r.createdAt,
+      })),
+      ...recentJobMetadata.map((r) => ({
+        type: 'job_metadata' as const,
+        id: r.jobId,
+        source: r.source,
+        elapsedMs: r.elapsedMs,
+        createdAt: r.createdAt,
+      })),
+    ]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 20);
+
+    logger.info(
+      {
+        event: 'admin.sync_health.query',
+        userUpsertTotal,
+        jobUpsertTotal,
+        userMetadataTotal,
+        jobMetadataTotal,
+      },
+      'Admin queried sync health'
+    );
+
+    return {
+      last24h: {
+        userUpserts: { total: userUpsertTotal, ...userUpsertCounts },
+        jobUpserts: { total: jobUpsertTotal, ...jobUpsertCounts },
+        userMetadataUpdates: { total: userMetadataTotal, ...userMetadataCounts },
+        jobMetadataUpdates: { total: jobMetadataTotal, ...jobMetadataCounts },
+      },
+      avgLatencyMs: avgLatencies,
+      recentSyncs,
+    };
+  });
 };

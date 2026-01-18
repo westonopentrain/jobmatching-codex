@@ -16,6 +16,10 @@ model AuditJobUpsert {
   requestId String?  @map("request_id")
   createdAt DateTime @default(now()) @map("created_at")
 
+  // Source tracking for event-driven sync monitoring
+  // Values: 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import', 'unknown'
+  source    String?  @map("source")
+
   // Input
   title    String?
   rawInput Json?    @map("raw_input")
@@ -50,6 +54,10 @@ model AuditUserUpsert {
   userId    String   @map("user_id")
   requestId String?  @map("request_id")
   createdAt DateTime @default(now()) @map("created_at")
+
+  // Source tracking for event-driven sync monitoring
+  // Values: 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import', 'unknown'
+  source    String?  @map("source")
 
   // Raw input from Bubble
   rawInput Json? @map("raw_input")
@@ -277,4 +285,52 @@ model AuditJobNotifyResult {
   @@map("audit_job_notify_results")
   @@index([notifyRequestId])
   @@index([userId])
+}
+
+// User metadata-only update audit (PATCH /v1/users/:id/metadata)
+// Tracks cheaper updates that skip LLM processing
+model AuditUserMetadataUpdate {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")
+  requestId String?  @map("request_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Source tracking for event-driven sync monitoring
+  // Values: 'manual', 'scheduled_metadata', 'bulk_import', 'unknown'
+  source    String?  @map("source")
+
+  // Updated fields
+  country   String?
+  languages String[]
+
+  // Performance
+  elapsedMs Float?   @map("elapsed_ms")
+
+  @@map("audit_user_metadata_updates")
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// Job metadata-only update audit (PATCH /v1/jobs/:id/metadata)
+// Tracks cheaper updates that skip LLM processing
+model AuditJobMetadataUpdate {
+  id        Int      @id @default(autoincrement())
+  jobId     String   @map("job_id")
+  requestId String?  @map("request_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Source tracking for event-driven sync monitoring
+  // Values: 'manual', 'scheduled_metadata', 'bulk_import', 'unknown'
+  source    String?  @map("source")
+
+  // Updated fields
+  countries String[]
+  languages String[]
+
+  // Performance
+  elapsedMs Float?   @map("elapsed_ms")
+
+  @@map("audit_job_metadata_updates")
+  @@index([jobId])
+  @@index([createdAt])
 }
