@@ -1393,6 +1393,15 @@ async function showNotificationDetail(notifyId) {
       </div>
 
       <div class="detail-section">
+        <h3>Required Subject Matter Codes</h3>
+        <div class="keywords">
+          ${(job?.subjectMatterCodes && job.subjectMatterCodes.length > 0)
+            ? job.subjectMatterCodes.map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
+            : '<span style="color:#666;">None required (open to all)</span>'}
+        </div>
+      </div>
+
+      <div class="detail-section">
         <h3>Score Distribution</h3>
         <div class="detail-grid">
           <div class="detail-item">
@@ -1439,6 +1448,7 @@ async function showNotificationDetail(notifyId) {
         const threshPct = (r.thresholdUsed * 100).toFixed(0);
         const scoreClass = getScoreClass(r.finalScore);
         const userCaption = user?.domainCapsule ? truncate(user.domainCapsule.split('Keywords')[0], 60) : '-';
+        const userExpertise = r.userSubjectMatterCodes?.length ? r.userSubjectMatterCodes.join(', ') : (user?.subjectMatterCodes?.length ? user.subjectMatterCodes.join(', ') : 'none');
 
         html += `
           <tr class="clickable-row ${scoreClass}" data-notify-user-index="${idx}">
@@ -1450,7 +1460,7 @@ async function showNotificationDetail(notifyId) {
                 <code style="font-size:11px;">${escapeHtml(truncate(r.userId, 18))}</code>
                 ${r.userCountry ? `<span style="font-size:11px;">${escapeHtml(r.userCountry)}</span>` : ''}
               </div>
-              <div style="font-size:11px;color:#666;margin-top:2px;">${escapeHtml(userCaption)}</div>
+              <div style="font-size:10px;color:#999;margin-top:2px;">Expertise: ${escapeHtml(truncate(userExpertise, 50))}</div>
             </td>
             <td><span class="badge badge-${r.expertiseTier || 'entry'}">${r.expertiseTier || 'entry'}</span></td>
           </tr>
@@ -1486,7 +1496,23 @@ async function showNotificationDetail(notifyId) {
         const finalPct = (r.finalScore * 100).toFixed(1);
         const threshPct = (r.thresholdUsed * 100).toFixed(0);
         const scoreClass = getScoreClass(r.finalScore);
-        const userCaption = user?.domainCapsule ? truncate(user.domainCapsule.split('Keywords')[0], 50) : '-';
+        const userExpertise = r.userSubjectMatterCodes?.length ? r.userSubjectMatterCodes.join(', ') : (user?.subjectMatterCodes?.length ? user.subjectMatterCodes.join(', ') : 'none');
+
+        // Determine badge color based on filter reason
+        let reasonBadgeClass = 'error';
+        if (r.filterReason?.includes('below')) {
+          reasonBadgeClass = 'warning';
+        } else if (r.filterReason?.includes('max_cap')) {
+          reasonBadgeClass = 'generic';
+        }
+
+        // Format the filter reason for display
+        let displayReason = r.filterReason || '-';
+        if (r.filterReason?.includes('low_similarity')) {
+          displayReason = r.filterReason; // Already includes percentage
+        } else if (r.filterReason === 'no_subject_matter_codes') {
+          displayReason = 'No expertise codes';
+        }
 
         html += `
           <tr class="${scoreClass}">
@@ -1497,10 +1523,10 @@ async function showNotificationDetail(notifyId) {
                 <code style="font-size:11px;">${escapeHtml(truncate(r.userId, 18))}</code>
                 ${r.userCountry ? `<span style="font-size:11px;">${escapeHtml(r.userCountry)}</span>` : ''}
               </div>
-              <div style="font-size:11px;color:#666;margin-top:2px;">${escapeHtml(userCaption)}</div>
+              <div style="font-size:10px;color:#999;margin-top:2px;">Expertise: ${escapeHtml(truncate(userExpertise, 40))}</div>
             </td>
             <td><span class="badge badge-${r.expertiseTier || 'entry'}">${r.expertiseTier || 'entry'}</span></td>
-            <td><span class="badge badge-${r.filterReason?.includes('below') ? 'warning' : 'error'}">${escapeHtml(r.filterReason || '-')}</span></td>
+            <td><span class="badge badge-${reasonBadgeClass}">${escapeHtml(displayReason)}</span></td>
           </tr>
         `;
       });
@@ -1619,6 +1645,15 @@ async function showNotifyUserDetail(index) {
           <span class="label">Credentials</span>
           <span class="value">${userData?.credentials?.length ? userData.credentials.join(', ') : 'None'}</span>
         </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Subject Matter Expertise</h3>
+      <div class="keywords">
+        ${(result.userSubjectMatterCodes?.length || userData?.subjectMatterCodes?.length)
+          ? (result.userSubjectMatterCodes || userData?.subjectMatterCodes || []).map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
+          : '<span style="color:#666;">None specified</span>'}
       </div>
     </div>
 
