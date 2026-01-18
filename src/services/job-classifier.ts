@@ -11,6 +11,7 @@ import { logger } from '../utils/logger';
 
 export type JobClass = 'specialized' | 'generic';
 export type ExpertiseTier = 'entry' | 'intermediate' | 'expert' | 'specialist';
+export type SubjectMatterStrictness = 'strict' | 'moderate' | 'lenient';
 
 export interface JobClassificationResult {
   jobClass: JobClass;
@@ -19,6 +20,8 @@ export interface JobClassificationResult {
     credentials: string[];
     minimumExperienceYears: number;
     subjectMatterCodes: string[];
+    acceptableSubjectCodes: string[];
+    subjectMatterStrictness: SubjectMatterStrictness;
     expertiseTier: ExpertiseTier;
     countries: string[];
     languages: string[];
@@ -48,6 +51,8 @@ Return ONLY valid JSON in this exact format:
   "credentials": ["MD", "PhD", etc] or [],
   "minimum_experience_years": number or 0,
   "subject_matter_codes": ["technology:angular", "medical:obgyn", "legal:corporate", etc] or [],
+  "acceptable_subject_codes": ["technology:javascript", "technology:frontend", etc] or [],
+  "subject_matter_strictness": "strict" | "moderate" | "lenient",
   "expertise_tier": "entry" | "intermediate" | "expert" | "specialist",
   "countries": ["US", "UK", etc] or [],
   "languages": ["en", "es", etc] or [],
@@ -71,7 +76,46 @@ SUBJECT MATTER CODES - Extract SPECIFIC skills/frameworks required:
   - If job says "React Engineer", MUST include "technology:react"
 - For medical: "medical:obgyn", "medical:cardiology", "medical:radiology", etc.
 - For legal: "legal:corporate", "legal:ip", "legal:criminal", etc.
-- If no specific specialty applies or job is GENERIC, leave the array empty.`;
+- If no specific specialty applies or job is GENERIC, leave the array empty.
+
+ACCEPTABLE SUBJECT CODES - Related expertise that also qualifies:
+- Only fill this for SPECIALIZED jobs that have subject_matter_codes
+- Think about: "What other expertise would transfer well to this job?"
+- Consider adjacent skills, foundational knowledge, and related domains
+- Examples:
+  - Phonetic transcription job (codes: ["education:phonetics", "technology:speech-recognition"]):
+    acceptable: ["language:transcription", "language:linguistics", "technology:nlp", "language:audio-processing"]
+    Reasoning: Transcription skills transfer directly, linguistics provides phonetic foundation
+  - Angular code review job (codes: ["technology:angular"]):
+    acceptable: ["technology:typescript", "technology:javascript", "technology:frontend"]
+    Reasoning: Angular is TypeScript-based, frontend devs can learn Angular patterns
+  - Radiology image labeling (codes: ["medical:radiology"]):
+    acceptable: [] (empty - only radiologists should label medical images)
+    Reasoning: Medical imaging requires specific training, no transferable skills suffice
+- Users matching ANY acceptable code pass the filter without similarity scoring
+- Leave empty [] when ONLY exact domain expertise should qualify
+
+SUBJECT MATTER STRICTNESS - Controls how similar a user's expertise must be to pass:
+We match users to jobs by comparing their expertise codes semantically. This setting controls the similarity threshold:
+- "strict" (80% similarity required): Use when the job requires SPECIFIC, NON-TRANSFERABLE expertise
+  - Wrong expertise could cause harm or produce unusable results
+  - The skill cannot be "figured out" by someone from an adjacent field
+  - Examples: Medical diagnosis review, legal document analysis, safety-critical engineering
+
+- "moderate" (70% similarity required): Use for most specialized jobs
+  - Related expertise is acceptable - someone nearby in the field could do the job
+  - The core skills transfer across related specialties
+  - Examples: Most tech jobs (React dev could learn Vue), academic research review, technical writing
+
+- "lenient" (60% similarity required): Use when domain preference is soft
+  - The job benefits from domain knowledge but doesn't require it
+  - Someone motivated could learn the domain quickly
+  - Examples: Content moderation in a specific domain, basic QA with domain context
+
+KEY QUESTION: "If someone has 70% similar expertise, could they do this job well?"
+- If NO (a cardiologist can't do neurology) → strict
+- If PROBABLY (a React dev could handle Vue) → moderate
+- If YES (any tech person could moderate tech content) → lenient`;
 
 const CLASSIFICATION_TEMPERATURE = 0.1;
 const CLASSIFICATION_MAX_TOKENS = 800;
@@ -144,6 +188,15 @@ function parseClassificationResponse(responseText: string): JobClassificationRes
     ? parsed.subject_matter_codes.filter((c: unknown) => typeof c === 'string')
     : [];
 
+  const acceptableSubjectCodes: string[] = Array.isArray(parsed.acceptable_subject_codes)
+    ? parsed.acceptable_subject_codes.filter((c: unknown) => typeof c === 'string')
+    : [];
+
+  const validStrictness: SubjectMatterStrictness[] = ['strict', 'moderate', 'lenient'];
+  const subjectMatterStrictness: SubjectMatterStrictness = validStrictness.includes(parsed.subject_matter_strictness)
+    ? parsed.subject_matter_strictness
+    : 'moderate';
+
   const validTiers: ExpertiseTier[] = ['entry', 'intermediate', 'expert', 'specialist'];
   const expertiseTier: ExpertiseTier = validTiers.includes(parsed.expertise_tier)
     ? parsed.expertise_tier
@@ -166,6 +219,8 @@ function parseClassificationResponse(responseText: string): JobClassificationRes
       credentials,
       minimumExperienceYears,
       subjectMatterCodes,
+      acceptableSubjectCodes,
+      subjectMatterStrictness,
       expertiseTier,
       countries,
       languages,
@@ -286,6 +341,8 @@ function fallbackClassification(job: NormalizedJobPosting): JobClassificationRes
       credentials: [],
       minimumExperienceYears: 0,
       subjectMatterCodes: [],
+      acceptableSubjectCodes: [],
+      subjectMatterStrictness: 'moderate',
       expertiseTier: 'entry',
       countries: job.availableCountries.map((c) => c.toUpperCase().slice(0, 2)),
       languages: job.availableLanguages.map((l) => l.toLowerCase().slice(0, 2)),

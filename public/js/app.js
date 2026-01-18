@@ -554,12 +554,33 @@ async function showJobDetail(jobId) {
       </div>
 
       <div class="detail-section">
-        <h3>Subject Matter Codes</h3>
-        <div class="keywords">
-          ${(latest.subjectMatterCodes && latest.subjectMatterCodes.length > 0)
-            ? latest.subjectMatterCodes.map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
-            : '<span style="color:#666;">None specified</span>'}
+        <h3>Subject Matter Requirements</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Strictness</span>
+            <span class="value"><span class="badge badge-${latest.subjectMatterStrictness === 'strict' ? 'error' : (latest.subjectMatterStrictness === 'lenient' ? 'success' : 'warning')}">${latest.subjectMatterStrictness || 'moderate'}</span></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Threshold</span>
+            <span class="value">${latest.subjectMatterStrictness === 'strict' ? '80%' : (latest.subjectMatterStrictness === 'lenient' ? '60%' : '70%')}</span>
+          </div>
         </div>
+        <div style="margin-top:12px;">
+          <strong>Required Codes:</strong>
+          <div class="keywords" style="margin-top:4px;">
+            ${(latest.subjectMatterCodes && latest.subjectMatterCodes.length > 0)
+              ? latest.subjectMatterCodes.map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
+              : '<span style="color:#666;">None specified</span>'}
+          </div>
+        </div>
+        ${(latest.acceptableSubjectCodes && latest.acceptableSubjectCodes.length > 0) ? `
+          <div style="margin-top:12px;">
+            <strong>Also Acceptable:</strong>
+            <div class="keywords" style="margin-top:4px;">
+              ${latest.acceptableSubjectCodes.map(c => `<span class="keyword" style="background:#e3f2fd;color:#1565c0;">${escapeHtml(c)}</span>`).join('')}
+            </div>
+          </div>
+        ` : ''}
       </div>
 
       <div class="detail-section">
@@ -1393,12 +1414,33 @@ async function showNotificationDetail(notifyId) {
       </div>
 
       <div class="detail-section">
-        <h3>Required Subject Matter Codes</h3>
-        <div class="keywords">
-          ${(job?.subjectMatterCodes && job.subjectMatterCodes.length > 0)
-            ? job.subjectMatterCodes.map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
-            : '<span style="color:#666;">None required (open to all)</span>'}
+        <h3>Subject Matter Requirements</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Strictness</span>
+            <span class="value"><span class="badge badge-${job?.subjectMatterStrictness === 'strict' ? 'error' : (job?.subjectMatterStrictness === 'lenient' ? 'success' : 'warning')}">${job?.subjectMatterStrictness || 'moderate'}</span></span>
+          </div>
+          <div class="detail-item">
+            <span class="label">Threshold</span>
+            <span class="value">${job?.subjectMatterStrictness === 'strict' ? '80%' : (job?.subjectMatterStrictness === 'lenient' ? '60%' : '70%')}</span>
+          </div>
         </div>
+        <div style="margin-top:12px;">
+          <strong>Required Codes:</strong>
+          <div class="keywords" style="margin-top:4px;">
+            ${(job?.subjectMatterCodes && job.subjectMatterCodes.length > 0)
+              ? job.subjectMatterCodes.map(c => `<span class="keyword">${escapeHtml(c)}</span>`).join('')
+              : '<span style="color:#666;">None required (open to all)</span>'}
+          </div>
+        </div>
+        ${(job?.acceptableSubjectCodes && job.acceptableSubjectCodes.length > 0) ? `
+          <div style="margin-top:12px;">
+            <strong>Also Acceptable:</strong>
+            <div class="keywords" style="margin-top:4px;">
+              ${job.acceptableSubjectCodes.map(c => `<span class="keyword" style="background:#e3f2fd;color:#1565c0;">${escapeHtml(c)}</span>`).join('')}
+            </div>
+          </div>
+        ` : ''}
       </div>
 
       <div class="detail-section">

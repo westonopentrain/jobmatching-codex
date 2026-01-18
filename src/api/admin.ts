@@ -609,6 +609,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         expertiseTier: true,
         credentials: true,
         subjectMatterCodes: true,
+        acceptableSubjectCodes: true,
+        subjectMatterStrictness: true,
       },
     });
 

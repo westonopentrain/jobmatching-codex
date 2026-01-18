@@ -5,7 +5,7 @@ import { AppError, toErrorResponse } from '../utils/errors';
 import { ensureAuthorized } from '../utils/auth';
 import { getEnv, requireEnv } from '../utils/env';
 import { EMBEDDING_DIMENSION, EMBEDDING_MODEL, embedText } from '../services/embeddings';
-import { getSemanticMatchDetails, SemanticMatchResult } from '../services/subject-matter-embeddings';
+import { getSemanticMatchDetails, getThresholdForStrictness, SemanticMatchResult } from '../services/subject-matter-embeddings';
 import { upsertVector, deleteVectors, fetchVectors, queryUsersByFilter, queryByVector, queryUsersWithSubjectMatterCodes } from '../services/pinecone';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
@@ -160,6 +160,8 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         job_class: classification.jobClass,
         required_credentials: classification.requirements.credentials,
         subject_matter_codes: classification.requirements.subjectMatterCodes,
+        acceptable_subject_codes: classification.requirements.acceptableSubjectCodes,
+        subject_matter_strictness: classification.requirements.subjectMatterStrictness,
         required_experience_years: classification.requirements.minimumExperienceYears,
         expertise_tier: classification.requirements.expertiseTier,
         countries: classification.requirements.countries,
@@ -390,6 +392,8 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         job_class: classification.jobClass,
         required_credentials: classification.requirements.credentials,
         subject_matter_codes: classification.requirements.subjectMatterCodes,
+        acceptable_subject_codes: classification.requirements.acceptableSubjectCodes,
+        subject_matter_strictness: classification.requirements.subjectMatterStrictness,
         required_experience_years: classification.requirements.minimumExperienceYears,
         expertise_tier: classification.requirements.expertiseTier,
         countries: classification.requirements.countries,
@@ -550,6 +554,9 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       // Jobs have subject_matter_codes like ["technology:angular", "medical:obgyn"]
       // Filter users to only those with overlapping codes
       const jobSubjectMatterCodes = classification.requirements.subjectMatterCodes ?? [];
+      const acceptableSubjectCodes = classification.requirements.acceptableSubjectCodes ?? [];
+      const subjectMatterStrictness = classification.requirements.subjectMatterStrictness ?? 'moderate';
+      const subjectMatterThreshold = getThresholdForStrictness(subjectMatterStrictness);
       const subjectMatterFilteredUserIds = new Set<string>();
       const userMatchDetails = new Map<string, SemanticMatchResult>();
 
@@ -559,9 +566,12 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
             event: 'notify.subject_matter_filter_start',
             jobId: job_id,
             jobSubjectMatterCodes,
+            acceptableSubjectCodes,
+            subjectMatterStrictness,
+            subjectMatterThreshold,
             candidatesBeforeFilter: qualifiedUsers.length,
           },
-          'Starting subject matter code filtering (semantic embeddings)'
+          'Starting subject matter code filtering (semantic embeddings with dynamic threshold)'
         );
 
         const usersBeforeFilter = qualifiedUsers.length;
@@ -572,9 +582,25 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
           qualifiedUsers.map(async (u) => {
             const metadata = userMetadataMap.get(u.userId) as Record<string, unknown> | undefined;
             const userCodes = (metadata?.subject_matter_codes as string[]) ?? [];
-            const matchDetails = await getSemanticMatchDetails(userCodes, jobSubjectMatterCodes);
-            userMatchDetails.set(u.userId, matchDetails);
-            return { user: u, matchDetails };
+
+            // Check if user has any acceptable code (exact match)
+            const hasAcceptableCode = acceptableSubjectCodes.length > 0 && userCodes.some(uc =>
+              acceptableSubjectCodes.some(ac => ac.toLowerCase() === uc.toLowerCase())
+            );
+
+            // Get semantic match details with dynamic threshold
+            const matchDetails = await getSemanticMatchDetails(userCodes, jobSubjectMatterCodes, subjectMatterThreshold);
+
+            // User passes if they have an acceptable code OR pass semantic threshold
+            const passesFilter = hasAcceptableCode || matchDetails.hasMatch;
+
+            // Store enhanced match details
+            userMatchDetails.set(u.userId, {
+              ...matchDetails,
+              hasMatch: passesFilter,
+            });
+
+            return { user: u, matchDetails: { ...matchDetails, hasMatch: passesFilter }, hasAcceptableCode };
           })
         );
 
@@ -589,16 +615,23 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
           .filter((r) => r.matchDetails.hasMatch)
           .map((r) => r.user);
 
+        // Count how many passed via acceptable codes vs semantic match
+        const passedViaAcceptable = semanticFilterResults.filter(r => r.hasAcceptableCode).length;
+
         log.info(
           {
             event: 'notify.subject_matter_filter_complete',
             jobId: job_id,
             jobSubjectMatterCodes,
+            acceptableSubjectCodes,
+            subjectMatterStrictness,
+            subjectMatterThreshold,
             candidatesBeforeFilter: usersBeforeFilter,
             candidatesAfterFilter: qualifiedUsers.length,
             filteredOut: usersBeforeFilter - qualifiedUsers.length,
+            passedViaAcceptableCodes: passedViaAcceptable,
           },
-          'Subject matter code filtering complete (semantic embeddings)'
+          'Subject matter code filtering complete (semantic embeddings with dynamic threshold)'
         );
       }
 
@@ -623,9 +656,10 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
             // User has no subject matter codes
             filterReason = `no_subject_matter_codes`;
           } else if (matchDetails.bestSimilarity > 0) {
-            // User had codes but similarity was too low
+            // User had codes but similarity was too low for the threshold
             const similarityPct = Math.round(matchDetails.bestSimilarity * 100);
-            filterReason = `low_similarity (${similarityPct}%)`;
+            const thresholdPct = Math.round(subjectMatterThreshold * 100);
+            filterReason = `low_similarity (${similarityPct}% < ${thresholdPct}%)`;
           } else {
             // Fallback
             filterReason = `missing_subject_matter (${jobSubjectMatterCodes.join(', ')})`;
@@ -705,6 +739,9 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         // Subject matter code filtering stats (for specialized jobs)
         subject_matter_filter: jobSubjectMatterCodes.length > 0 ? {
           required_codes: jobSubjectMatterCodes,
+          acceptable_codes: acceptableSubjectCodes,
+          strictness: subjectMatterStrictness,
+          threshold: subjectMatterThreshold,
           filtered_count: subjectMatterFilteredCount,
           passed_count: afterSubjectMatterFilterCount,
         } : undefined,
