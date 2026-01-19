@@ -762,3 +762,100 @@ export async function deleteJobQualifications(jobId: string): Promise<{ deleted:
     return { deleted: 0 };
   }
 }
+
+/**
+ * Sync active job status from Bubble
+ * Called periodically to update which jobs are active/inactive
+ */
+export async function syncActiveJobsFromBubble(
+  activeJobIds: string[]
+): Promise<{
+  success: boolean;
+  activated: number;
+  deactivated: number;
+  created: number;
+  unchanged: number;
+}> {
+  if (!isDatabaseAvailable()) {
+    return { success: false, activated: 0, deactivated: 0, created: 0, unchanged: 0 };
+  }
+
+  const db = getDb();
+  if (!db) {
+    return { success: false, activated: 0, deactivated: 0, created: 0, unchanged: 0 };
+  }
+
+  let activated = 0;
+  let deactivated = 0;
+  let created = 0;
+  let unchanged = 0;
+
+  try {
+    const activeSet = new Set(activeJobIds);
+
+    // Get all jobs currently in our database
+    const existingJobs = await db.job.findMany({
+      select: { id: true, isActive: true },
+    });
+
+    // Update existing jobs
+    for (const job of existingJobs) {
+      const shouldBeActive = activeSet.has(job.id);
+
+      if (job.isActive !== shouldBeActive) {
+        await db.job.update({
+          where: { id: job.id },
+          data: { isActive: shouldBeActive },
+        });
+
+        // Also update denormalized field in qualifications
+        await db.jobUserQualification.updateMany({
+          where: { jobId: job.id },
+          data: { jobActive: shouldBeActive },
+        });
+
+        if (shouldBeActive) {
+          activated++;
+        } else {
+          deactivated++;
+        }
+      } else {
+        unchanged++;
+      }
+    }
+
+    // Create records for any new active jobs not in our database
+    const existingIds = new Set(existingJobs.map((j) => j.id));
+    for (const jobId of activeJobIds) {
+      if (!existingIds.has(jobId)) {
+        await db.job.create({
+          data: {
+            id: jobId,
+            isActive: true,
+          },
+        });
+        created++;
+      }
+    }
+
+    logger.info(
+      {
+        event: 'qualifications.sync_active_jobs.complete',
+        totalActive: activeJobIds.length,
+        activated,
+        deactivated,
+        created,
+        unchanged,
+      },
+      'Synced active job status from Bubble'
+    );
+
+    return { success: true, activated, deactivated, created, unchanged };
+  } catch (error) {
+    logger.error(
+      { event: 'qualifications.sync_active_jobs.error', error },
+      'Failed to sync active jobs from Bubble'
+    );
+    return { success: false, activated, deactivated, created, unchanged };
+  }
+}
