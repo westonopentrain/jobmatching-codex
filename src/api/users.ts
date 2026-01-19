@@ -98,12 +98,37 @@ function normalizeRequest(body: RequestBody): NormalizedUserProfile {
   };
 }
 
-// Thresholds matching jobs.ts
+// Thresholds matching jobs.ts - base thresholds for async evaluation
 const MIN_THRESHOLD_SPECIALIZED = 0.35;
 const MIN_THRESHOLD_GENERIC = 0.25;
 
 function getBaseMinThreshold(jobClass: JobClass): number {
   return jobClass === 'specialized' ? MIN_THRESHOLD_SPECIALIZED : MIN_THRESHOLD_GENERIC;
+}
+
+// Tier-adjusted thresholds for recommended-jobs endpoint (matching score_jobs_for_user)
+// These are stricter to ensure high-quality recommendations
+const RECOMMENDED_MIN_SPECIALIZED = 0.50; // 50% for specialized jobs
+const RECOMMENDED_MIN_GENERIC = 0.35; // 35% for generic jobs
+
+// Tier-based threshold multipliers for generic jobs
+// Specialists need higher scores to match generic jobs (they should focus on specialized work)
+const TIER_THRESHOLD_MULTIPLIERS: Record<string, number> = {
+  'specialist': 1.3, // 45% for generic (35% * 1.3)
+  'expert': 1.15, // ~40% for generic
+  'intermediate': 1.0,
+  'entry': 1.0,
+};
+
+function getTierAdjustedMinThreshold(
+  userTier: string | undefined,
+  jobClass: JobClass
+): number {
+  const baseMin = jobClass === 'specialized' ? RECOMMENDED_MIN_SPECIALIZED : RECOMMENDED_MIN_GENERIC;
+  const multiplier = TIER_THRESHOLD_MULTIPLIERS[userTier ?? 'entry'] ?? 1.0;
+
+  // Only apply multiplier to generic jobs - specialists shouldn't see irrelevant generic jobs
+  return jobClass === 'generic' ? baseMin * multiplier : baseMin;
 }
 
 /**
@@ -701,6 +726,190 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       log.error({ err: error }, 'Unexpected error during user qualifications query');
       const appError = new AppError({
         code: 'USER_QUALIFICATIONS_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // GET endpoint for recommended jobs for a user
+  // Returns job IDs pre-filtered by tier-adjusted thresholds and sorted by score
+  // This simplifies Bubble integration - just map job_ids to Jobs
+  fastify.get('/v1/users/:userId/recommended-jobs', async (request, reply) => {
+    const requestId = request.id as string;
+    const log = request.log.child({ route: 'users.recommended_jobs', requestId });
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { userId } = request.params as { userId: string };
+      if (!userId || typeof userId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'User ID is required',
+        });
+      }
+
+      const { limit: limitParam } = request.query as { limit?: string };
+      const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+
+      log.info({ event: 'users.recommended_jobs.start', userId, limit }, 'Starting recommended jobs query');
+
+      // Fetch user vectors
+      const userDomainVectorId = `usr_${userId}::domain`;
+      const userTaskVectorId = `usr_${userId}::task`;
+
+      const userVectors = await fetchVectors([userDomainVectorId, userTaskVectorId]);
+      const userDomainVector = userVectors[userDomainVectorId]?.values;
+      const userTaskVector = userVectors[userTaskVectorId]?.values;
+
+      if (!userDomainVector || !userTaskVector || userDomainVector.length === 0 || userTaskVector.length === 0) {
+        throw new AppError({
+          code: 'USER_VECTORS_MISSING',
+          statusCode: 404,
+          message: 'User vectors not found; upsert user first via /v1/users/upsert.',
+        });
+      }
+
+      // Get user expertise tier from metadata
+      const userMetadata = userVectors[userDomainVectorId]?.metadata as Record<string, unknown> | undefined;
+      const userExpertiseTier = (userMetadata?.expertise_tier as string | undefined) ?? undefined;
+
+      // Get all active jobs
+      const activeJobs = await getActiveJobs();
+      if (activeJobs.length === 0) {
+        log.info({ event: 'users.recommended_jobs.no_jobs', userId }, 'No active jobs found');
+        return reply.status(200).send({
+          user_id: userId,
+          user_expertise_tier: userExpertiseTier,
+          count: 0,
+          job_ids: [],
+          jobs: [],
+        });
+      }
+
+      // Fetch all job vectors
+      const jobVectorIds = activeJobs.flatMap((job) => [
+        `job_${job.id}::domain`,
+        `job_${job.id}::task`,
+      ]);
+
+      const jobVectors = await fetchVectors(jobVectorIds);
+
+      // Score each job against the user
+      const jobScores: Array<{
+        jobId: string;
+        jobClass: JobClass;
+        finalScore: number;
+        domainScore: number;
+        taskScore: number;
+        threshold: number;
+        aboveThreshold: boolean;
+      }> = [];
+
+      for (const job of activeJobs) {
+        const domainVectorId = `job_${job.id}::domain`;
+        const taskVectorId = `job_${job.id}::task`;
+
+        const jobDomainVector = jobVectors[domainVectorId]?.values;
+        const jobTaskVector = jobVectors[taskVectorId]?.values;
+
+        if (!jobDomainVector || !jobTaskVector || jobDomainVector.length === 0 || jobTaskVector.length === 0) {
+          // Skip jobs without vectors
+          continue;
+        }
+
+        // Get job classification from metadata
+        const jobMetadata = jobVectors[domainVectorId]?.metadata as Record<string, unknown> | undefined;
+        const jobClass = (jobMetadata?.job_class as JobClass | undefined) ?? 'generic';
+
+        // Calculate cosine similarity scores
+        const domainScore = cosineSimilarity(userDomainVector, jobDomainVector);
+        const taskScore = cosineSimilarity(userTaskVector, jobTaskVector);
+
+        // Calculate final score using job class weights
+        const weights = getWeightProfile(jobClass);
+        const finalScore = weights.w_domain * domainScore + weights.w_task * taskScore;
+
+        // Get tier-adjusted threshold for this job
+        const threshold = getTierAdjustedMinThreshold(userExpertiseTier, jobClass);
+        const aboveThreshold = finalScore >= threshold;
+
+        jobScores.push({
+          jobId: job.id,
+          jobClass,
+          finalScore,
+          domainScore,
+          taskScore,
+          threshold,
+          aboveThreshold,
+        });
+      }
+
+      // Filter to only jobs above threshold and sort by final score descending
+      const recommendedJobs = jobScores
+        .filter((j) => j.aboveThreshold)
+        .sort((a, b) => b.finalScore - a.finalScore);
+
+      // Apply limit if specified
+      const limitedJobs = limit ? recommendedJobs.slice(0, limit) : recommendedJobs;
+
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Number(elapsedMs.toFixed(2));
+
+      log.info(
+        {
+          event: 'users.recommended_jobs.complete',
+          userId,
+          userTier: userExpertiseTier,
+          activeJobs: activeJobs.length,
+          scoredJobs: jobScores.length,
+          recommendedJobs: limitedJobs.length,
+          elapsedMs: elapsedRounded,
+        },
+        'Completed recommended jobs query'
+      );
+
+      // Round scores for response
+      const roundScore = (n: number) => Math.round(n * 10000) / 10000;
+
+      return reply.status(200).send({
+        user_id: userId,
+        user_expertise_tier: userExpertiseTier,
+        count: limitedJobs.length,
+        total_above_threshold: recommendedJobs.length,
+        // Simple job_ids list for easy Bubble integration
+        job_ids: limitedJobs.map((j) => j.jobId),
+        // Detailed jobs list with scores
+        jobs: limitedJobs.map((j, idx) => ({
+          job_id: j.jobId,
+          rank: idx + 1,
+          job_class: j.jobClass,
+          final_score: roundScore(j.finalScore),
+          domain_score: roundScore(j.domainScore),
+          task_score: roundScore(j.taskScore),
+          threshold_used: roundScore(j.threshold),
+        })),
+        elapsed_ms: elapsedRounded,
+      });
+    } catch (error) {
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const elapsedRounded = Number(elapsedMs.toFixed(2));
+
+      if (error instanceof AppError) {
+        log.warn(
+          { error: error.message, code: error.code, details: error.details, event: 'users.recommended_jobs.error', elapsedMs: elapsedRounded },
+          'Handled recommended jobs error'
+        );
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error, event: 'users.recommended_jobs.error', elapsedMs: elapsedRounded }, 'Unexpected error during recommended jobs query');
+      const appError = new AppError({
+        code: 'USER_RECOMMENDED_JOBS_FAILURE',
         statusCode: 500,
         message: 'Unexpected server error',
       });
