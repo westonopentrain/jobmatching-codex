@@ -497,6 +497,43 @@ Use the URL as the base endpoint for Bubble, Postman, or curl smoke tests. The S
 }
 ```
 
+### Re-notify job (find newly qualifying users)
+
+| Property | Value |
+| -------- | ----- |
+| Name | `re_notify_job` |
+| Use as | Action |
+| Data type | JSON |
+| Method | POST |
+| URL | `https://user-capsule-upsert-service.onrender.com/v1/jobs/<job_id>/re-notify` |
+| Body type | JSON |
+
+**Body template:**
+```json
+{
+  "available_countries": [<countries>],
+  "available_languages": [<languages>],
+  "max_notifications": 500
+}
+```
+
+**Body parameters:**
+| Key | Description | Allow blank | In URL |
+| --- | ----------- | ----------- | ------ |
+| `job_id` | Job's unique id | No | Yes (path) |
+| `countries` | Comma-separated quoted country names | Yes | No |
+| `languages` | Comma-separated quoted language names | Yes | No |
+
+**Response includes:**
+- `newly_qualified_user_ids[]`: Array of user IDs who now qualify but weren't previously notified
+- `total_qualified`: Total users who currently qualify
+- `previously_notified`: Users who were already notified (won't be in the list)
+- `elapsed_ms`: Processing time
+
+**Usage:** Call after job upsert to find users who should receive notification emails due to job changes.
+
+---
+
 ### Update job metadata (metadata-only, no LLM)
 
 | Property | Value |
@@ -1047,11 +1084,192 @@ Filter in Render dashboard:
 
 ---
 
+---
+
+## Email Notification Workflow (Existing)
+
+### email - new job posted - to lblrs
+
+**Purpose:** Sends job notification email to a single user via SendGrid.
+
+**Configuration:**
+- Endpoint name: `email - new job posted - to lblrs`
+- Ignore privacy rules: Yes
+- Response type: JSON Object
+
+**Parameters:**
+| Key | Type | Description |
+|-----|------|-------------|
+| `job` | Job | The job to notify about |
+| `ToUser` | User | The user to email |
+
+**Steps:**
+
+The workflow has 3 conditional SendGrid steps based on job payment type:
+
+1. **SendGrid - Send email - PER LABEL** (Only when job is per-label payment)
+2. **SendGrid - Send email - PER HOUR** (Only when job is per-hour payment)
+3. **SendGrid - Send email - FIXED COST** (Only when job is fixed cost)
+
+All three use the same SendGrid template and substitution tags:
+
+| Substitution Tag | Value |
+|------------------|-------|
+| `job_name` | job's Title |
+| `client_name` | job's Creator's employerCompanyName |
+| `client_country` | job's Creator's userCountry's Display |
+| `data_type` | job's Data Type's Display |
+| `software` | job's LabelSoftware's Display |
+| `label_type` | job's LabelType:each item's Display |
+| `price` | Arbitrary text (payment amount) |
+| `pay_type` | Arbitrary text (payment type label) |
+| `profile_photo` | job's Creator's profilePhoto URL |
+| `button_url` | Link to job (live vs dev) |
+
+**Email Settings:**
+- Template ID: `d-79a5a17d5ab1421e99393fb1ad4f883a`
+- From Name: `OpenTrain Alert`
+- From Email: `admin@opentrain.ai`
+- Subject: Conditional based on user's lblrType_Agency/Freelancer
+
+---
+
+## Job Edit Re-Notification Integration
+
+When a job is edited, we want to notify ONLY users who newly qualify (didn't qualify before the edit). This prevents spamming users who were already notified.
+
+### New API Endpoint
+
+**POST /v1/jobs/:jobId/re-notify**
+
+Returns users who now qualify but weren't previously notified.
+
+```json
+// Request
+POST /v1/jobs/abc123/re-notify
+{
+  "available_countries": ["US", "CA"],  // optional
+  "available_languages": ["English"],   // optional
+  "max_notifications": 500              // optional, default 500
+}
+
+// Response
+{
+  "status": "ok",
+  "job_id": "abc123",
+  "newly_qualified_user_ids": ["user1", "user2", "user3"],
+  "total_qualified": 45,
+  "previously_notified": 42,
+  "elapsed_ms": 1234
+}
+```
+
+### Integration with Existing Workflow
+
+To use re-notify with the existing `email - new job posted - to lblrs` workflow:
+
+**Step 1:** Add new API Connector call `re_notify_job` (see API Connector section below)
+
+**Step 2:** Modify `upsert-capsules-job` backend workflow to add steps after the upsert:
+
+```
+Existing Step 1: Call Render upsert API
+Existing Step 2: Save response to Job
+
+NEW Step 3: Call re_notify_job API
+- job_id: job's unique id
+- countries: job's AvailableCountries formatted
+- languages: job's AvailableLanguages formatted
+
+NEW Step 4: Schedule email workflow on a list
+- Only when: Result of step 3's newly_qualified_user_ids:count > 0
+- Type of things: text (the user IDs)
+- List to run on: Result of step 3's newly_qualified_user_ids
+- API Workflow: email - new job posted - to lblrs
+- job: job
+- ToUser: Search for Users where unique id = This text:first item
+```
+
+---
+
+## Job Active Status Sync
+
+Instead of having Bubble call Render every time a job's status changes, we use periodic batch sync. This is simpler for Bubble and works well for a few hundred jobs.
+
+### Option A: Bubble Pushes to Render (Recommended)
+
+Bubble calls Render's sync endpoint periodically (e.g., every 2-4 hours via scheduled workflow).
+
+**Bubble Setup:**
+
+1. **Add API Connector call** `sync_active_jobs`:
+   - Method: POST
+   - URL: `https://user-capsule-upsert-service.onrender.com/admin/sync-active-jobs`
+   - Body type: JSON
+   - Body: `{ "active_job_ids": [<job_ids>] }`
+
+2. **Create scheduled recurring workflow** `sync-active-jobs-to-render`:
+   - Recurring: Every 2 hours
+   - Action: Call `sync_active_jobs` API
+   - `job_ids`: `Search for Jobs where [active field] = yes :each item's unique id` formatted as JSON array
+
+**Response from Render:**
+```json
+{
+  "status": "ok",
+  "input_count": 150,
+  "activated": 5,
+  "deactivated": 3,
+  "created": 2,
+  "unchanged": 140
+}
+```
+
+### Option B: Render Polls Bubble
+
+If you prefer Render to pull from Bubble:
+
+1. **Expose Bubble API endpoint** `get-active-job-ids` that returns active job IDs
+2. **Configure Render cron job** to call it periodically
+
+**Bubble Setup:**
+
+Create a **Backend Workflow** exposed as a public API:
+
+**Workflow:** `get-active-job-ids`
+- Endpoint name: `get-active-job-ids`
+- Expose as public API workflow: Yes
+- Response type: JSON
+
+**Step 1: Return data**
+- Data to return: Search for Jobs where [your active status field] = yes
+- Format as: `unique id` list
+
+**Render Setup:**
+
+Add environment variable:
+- `BUBBLE_API_URL`: `https://[your-bubble-app].bubbleapps.io/api/1.1/wf/get-active-job-ids`
+
+Set up Render cron job to call this endpoint every 2-4 hours.
+
+### What the Sync Does
+
+When `POST /admin/sync-active-jobs` is called with a list of active job IDs:
+1. Jobs in the list → marked `isActive: true`
+2. Jobs NOT in the list → marked `isActive: false`
+3. New job IDs → created with `isActive: true`
+4. Updates denormalized `jobActive` field in qualification records
+
+---
+
 ## Pre-Deployment Checklist
 
 Before going live, complete these remaining tasks:
 
 - [ ] **Wire up new job creation** to call `upsert-capsules-job` with `source: "new_job"`
 - [ ] **Wire up new user signup** to call `upsert-capsules-user` with `source: "new_user"`
+- [ ] **Create `get-active-job-ids` API workflow** in Bubble for Render to poll
+- [ ] **Add `re_notify_job` API call** to Bubble API Connector
+- [ ] **Modify `upsert-capsules-job`** to call re-notify and send emails
 
 See `docs/bubble-implementation-checklist.md` for detailed tracking.

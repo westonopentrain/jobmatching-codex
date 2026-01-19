@@ -3,11 +3,12 @@
  */
 
 import { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { logger } from '../utils/logger';
 import { ensureAuthorized } from '../utils/auth';
-import { requireEnv } from '../utils/env';
-import { getQualificationSummary, getAllPendingNotifications, getActiveJobs } from '../services/qualifications';
+import { requireEnv, getEnv } from '../utils/env';
+import { getQualificationSummary, getAllPendingNotifications, getActiveJobs, syncActiveJobsFromBubble } from '../services/qualifications';
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const serviceApiKey = requireEnv('SERVICE_API_KEY');
@@ -1003,6 +1004,44 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         job_id: j.id,
         title: j.title,
       })),
+    };
+  });
+
+  // Sync active job status from Bubble
+  // Bubble calls this with a list of active job IDs
+  const syncActiveJobsSchema = z.object({
+    active_job_ids: z.array(z.string()),
+  });
+
+  fastify.post('/admin/sync-active-jobs', async (request, reply) => {
+    const parsed = syncActiveJobsSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: 'Invalid request body',
+        details: parsed.error.issues,
+      });
+    }
+
+    const { active_job_ids } = parsed.data;
+
+    const result = await syncActiveJobsFromBubble(active_job_ids);
+
+    logger.info(
+      {
+        event: 'admin.sync_active_jobs',
+        inputCount: active_job_ids.length,
+        ...result,
+      },
+      'Admin synced active jobs from Bubble'
+    );
+
+    return {
+      status: result.success ? 'ok' : 'error',
+      input_count: active_job_ids.length,
+      activated: result.activated,
+      deactivated: result.deactivated,
+      created: result.created,
+      unchanged: result.unchanged,
     };
   });
 
