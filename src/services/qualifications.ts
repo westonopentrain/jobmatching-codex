@@ -545,6 +545,191 @@ export async function getAllPendingNotifications(
 }
 
 /**
+ * Store qualification results for a single user against multiple jobs
+ * Called after user profile update to populate "Recommended Jobs" data
+ */
+export async function storeUserQualificationsForJobs(
+  userId: string,
+  results: Array<{ jobId: string; qualifies: boolean; finalScore: number; domainScore: number; taskScore: number; thresholdUsed: number; filterReason: string | null }>
+): Promise<{ stored: number; errors: number }> {
+  if (!isDatabaseAvailable() || results.length === 0) {
+    return { stored: 0, errors: 0 };
+  }
+
+  const db = getDb();
+  if (!db) {
+    return { stored: 0, errors: 0 };
+  }
+
+  const now = new Date();
+  let stored = 0;
+  let errors = 0;
+
+  try {
+    // Upsert qualifications in batches
+    const batchSize = 50;
+    for (let i = 0; i < results.length; i += batchSize) {
+      const batch = results.slice(i, i + batchSize);
+
+      await Promise.all(
+        batch.map(async (result) => {
+          try {
+            // Get job's active status for denormalization
+            const job = await db.job.findUnique({ where: { id: result.jobId } });
+            if (!job) {
+              // Skip if job doesn't exist in our tracking
+              return;
+            }
+
+            await db.jobUserQualification.upsert({
+              where: {
+                jobId_userId: { jobId: result.jobId, userId },
+              },
+              create: {
+                jobId: result.jobId,
+                userId,
+                qualifies: result.qualifies,
+                finalScore: result.finalScore,
+                domainScore: result.domainScore,
+                taskScore: result.taskScore,
+                thresholdUsed: result.thresholdUsed,
+                filterReason: result.filterReason,
+                evaluatedAt: now,
+                jobActive: job.isActive,
+                // Don't set notifiedAt - user profile updates don't trigger notifications
+              },
+              update: {
+                qualifies: result.qualifies,
+                finalScore: result.finalScore,
+                domainScore: result.domainScore,
+                taskScore: result.taskScore,
+                thresholdUsed: result.thresholdUsed,
+                filterReason: result.filterReason,
+                evaluatedAt: now,
+                jobActive: job.isActive,
+                // Preserve existing notifiedAt - don't change notification status
+              },
+            });
+            stored++;
+          } catch (error) {
+            errors++;
+            logger.warn(
+              { event: 'qualifications.store_user.job_error', userId, jobId: result.jobId, error },
+              'Failed to store qualification for job'
+            );
+          }
+        })
+      );
+    }
+
+    logger.info(
+      { event: 'qualifications.user_stored', userId, stored, errors, total: results.length },
+      'Stored user qualification results for jobs'
+    );
+  } catch (error) {
+    logger.error(
+      { event: 'qualifications.store_user.error', userId, error },
+      'Failed to store user qualifications'
+    );
+  }
+
+  return { stored, errors };
+}
+
+/**
+ * Find users who newly qualify for a job (qualified now but not notified before)
+ * Used for re-notify after job edits
+ */
+export async function findNewlyQualifyingUsers(
+  jobId: string,
+  currentResults: QualificationResult[]
+): Promise<{
+  newlyQualifiedUserIds: string[];
+  totalQualified: number;
+  previouslyNotified: number;
+}> {
+  if (!isDatabaseAvailable()) {
+    // If no DB, treat all qualifying users as new
+    const qualifyingUsers = currentResults.filter((r) => r.qualifies);
+    return {
+      newlyQualifiedUserIds: qualifyingUsers.map((r) => r.userId),
+      totalQualified: qualifyingUsers.length,
+      previouslyNotified: 0,
+    };
+  }
+
+  const db = getDb();
+  if (!db) {
+    const qualifyingUsers = currentResults.filter((r) => r.qualifies);
+    return {
+      newlyQualifiedUserIds: qualifyingUsers.map((r) => r.userId),
+      totalQualified: qualifyingUsers.length,
+      previouslyNotified: 0,
+    };
+  }
+
+  try {
+    // Get users who are currently qualified
+    const qualifyingUsers = currentResults.filter((r) => r.qualifies);
+    const qualifyingUserIds = qualifyingUsers.map((r) => r.userId);
+
+    if (qualifyingUserIds.length === 0) {
+      return {
+        newlyQualifiedUserIds: [],
+        totalQualified: 0,
+        previouslyNotified: 0,
+      };
+    }
+
+    // Find which of these users were already notified for this job
+    const previouslyNotifiedRecords = await db.jobUserQualification.findMany({
+      where: {
+        jobId,
+        userId: { in: qualifyingUserIds },
+        notifiedAt: { not: null },
+      },
+      select: { userId: true },
+    });
+
+    const previouslyNotifiedSet = new Set(previouslyNotifiedRecords.map((r) => r.userId));
+
+    // Newly qualified = qualifies now AND was not previously notified
+    const newlyQualifiedUserIds = qualifyingUserIds.filter(
+      (userId) => !previouslyNotifiedSet.has(userId)
+    );
+
+    logger.info(
+      {
+        event: 'qualifications.find_newly_qualifying',
+        jobId,
+        totalQualified: qualifyingUserIds.length,
+        previouslyNotified: previouslyNotifiedSet.size,
+        newlyQualified: newlyQualifiedUserIds.length,
+      },
+      'Found newly qualifying users'
+    );
+
+    return {
+      newlyQualifiedUserIds,
+      totalQualified: qualifyingUserIds.length,
+      previouslyNotified: previouslyNotifiedSet.size,
+    };
+  } catch (error) {
+    logger.error(
+      { event: 'qualifications.find_newly_qualifying.error', jobId, error },
+      'Failed to find newly qualifying users'
+    );
+    // Fallback: return all qualifying users as new
+    const qualifyingUsers = currentResults.filter((r) => r.qualifies);
+    return {
+      newlyQualifiedUserIds: qualifyingUsers.map((r) => r.userId),
+      totalQualified: qualifyingUsers.length,
+      previouslyNotified: 0,
+    };
+  }
+}
+
+/**
  * Delete qualifications for a job (used when job is deleted)
  */
 export async function deleteJobQualifications(jobId: string): Promise<{ deleted: number }> {

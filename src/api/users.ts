@@ -8,11 +8,13 @@ import { NormalizedUserProfile } from '../utils/types';
 import { generateCapsules } from '../services/capsules';
 import { classifyUser } from '../services/user-classifier';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
-import { upsertVector, deleteVectors, updateVectorMetadata, VectorMetadata } from '../services/pinecone';
-import { requireEnv } from '../utils/env';
+import { upsertVector, deleteVectors, updateVectorMetadata, VectorMetadata, fetchVectors, queryByVector } from '../services/pinecone';
+import { requireEnv, getEnv } from '../utils/env';
 import { auditUserUpsert, auditUserMetadataUpdate } from '../services/audit';
 import { getDb, isDatabaseAvailable } from '../services/db';
-import { getUserQualifications } from '../services/qualifications';
+import { getUserQualifications, getActiveJobs, storeUserQualificationsForJobs } from '../services/qualifications';
+import { getWeightProfile, JobClass } from '../services/job-classifier';
+import { logger } from '../utils/logger';
 
 const requestSchema = z.object({
   user_id: z.string().min(1),
@@ -94,6 +96,139 @@ function normalizeRequest(body: RequestBody): NormalizedUserProfile {
     languages: sanitizeStringArray(body.languages),
     ...(country ? { country } : {}),
   };
+}
+
+// Thresholds matching jobs.ts
+const MIN_THRESHOLD_SPECIALIZED = 0.35;
+const MIN_THRESHOLD_GENERIC = 0.25;
+
+function getBaseMinThreshold(jobClass: JobClass): number {
+  return jobClass === 'specialized' ? MIN_THRESHOLD_SPECIALIZED : MIN_THRESHOLD_GENERIC;
+}
+
+/**
+ * Async re-evaluation of user against all active jobs
+ * Called after user profile update to populate "Recommended Jobs" data
+ * This is non-blocking and runs in the background
+ */
+async function evaluateUserAgainstActiveJobs(
+  userId: string,
+  userDomainEmbedding: number[],
+  userTaskEmbedding: number[]
+): Promise<void> {
+  try {
+    // Get all active jobs
+    const activeJobs = await getActiveJobs();
+    if (activeJobs.length === 0) {
+      logger.info(
+        { event: 'user.evaluate.no_active_jobs', userId },
+        'No active jobs to evaluate user against'
+      );
+      return;
+    }
+
+    logger.info(
+      { event: 'user.evaluate.start', userId, jobCount: activeJobs.length },
+      'Starting async evaluation of user against active jobs'
+    );
+
+    const results: Array<{
+      jobId: string;
+      qualifies: boolean;
+      finalScore: number;
+      domainScore: number;
+      taskScore: number;
+      thresholdUsed: number;
+      filterReason: string | null;
+    }> = [];
+
+    // Evaluate user against each job
+    for (const job of activeJobs) {
+      try {
+        const domainVectorId = `job_${job.id}::domain`;
+        const taskVectorId = `job_${job.id}::task`;
+
+        const vectors = await fetchVectors([domainVectorId, taskVectorId]);
+        if (!vectors[domainVectorId] || !vectors[taskVectorId]) {
+          // Job vectors not found, skip
+          continue;
+        }
+
+        const jobDomainVector = vectors[domainVectorId].values;
+        const jobTaskVector = vectors[taskVectorId].values;
+        const jobMetadata = vectors[domainVectorId].metadata as Record<string, unknown> | undefined;
+        const jobClass = (jobMetadata?.job_class as JobClass) ?? 'generic';
+
+        if (!jobDomainVector || !jobTaskVector) {
+          continue;
+        }
+
+        // Calculate cosine similarity scores
+        // Domain score: similarity between user domain and job domain
+        const domainScore = cosineSimilarity(userDomainEmbedding, jobDomainVector);
+        // Task score: similarity between user task and job task
+        const taskScore = cosineSimilarity(userTaskEmbedding, jobTaskVector);
+
+        // Calculate final score using job class weights
+        const weights = getWeightProfile(jobClass);
+        const finalScore = weights.w_domain * domainScore + weights.w_task * taskScore;
+
+        const threshold = getBaseMinThreshold(jobClass);
+        const qualifies = finalScore >= threshold;
+
+        results.push({
+          jobId: job.id,
+          qualifies,
+          finalScore,
+          domainScore,
+          taskScore,
+          thresholdUsed: threshold,
+          filterReason: qualifies ? null : `below_threshold (${(threshold * 100).toFixed(0)}%)`,
+        });
+      } catch (jobError) {
+        logger.warn(
+          { event: 'user.evaluate.job_error', userId, jobId: job.id, error: jobError },
+          'Failed to evaluate user against job'
+        );
+      }
+    }
+
+    // Store results
+    if (results.length > 0) {
+      const { stored, errors } = await storeUserQualificationsForJobs(userId, results);
+      logger.info(
+        { event: 'user.evaluate.complete', userId, evaluated: results.length, stored, errors },
+        'Completed async evaluation of user against active jobs'
+      );
+    }
+  } catch (error) {
+    logger.error(
+      { event: 'user.evaluate.error', userId, error },
+      'Failed to evaluate user against active jobs'
+    );
+  }
+}
+
+/**
+ * Calculate cosine similarity between two vectors
+ */
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    const aVal = a[i]!;
+    const bVal = b[i]!;
+    dotProduct += aVal * bVal;
+    normA += aVal * aVal;
+    normB += bVal * bVal;
+  }
+
+  const magnitude = Math.sqrt(normA) * Math.sqrt(normB);
+  return magnitude === 0 ? 0 : dotProduct / magnitude;
 }
 
 export const userRoutes: FastifyPluginAsync = async (fastify) => {
@@ -231,6 +366,12 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           taskVectorId,
         },
         'Pinecone upsert completed'
+      );
+
+      // Async re-evaluation against active jobs (non-blocking)
+      // This populates the "Recommended Jobs" data for the user
+      evaluateUserAgainstActiveJobs(normalized.userId, domainEmbedding, taskEmbedding).catch(
+        (err) => log.error({ err, event: 'user.async_eval.error' }, 'Async job evaluation failed')
       );
 
       const now = new Date().toISOString();
