@@ -98,77 +98,87 @@ These tasks need to be completed before going live:
 
 This feature populates `lblr_recommended_jobs` on User with jobs sorted by match score, using intelligent tier-aware thresholds.
 
-### Render API (Already Built)
+### Render API (Complete)
 
 - [x] **Endpoint:** `GET /v1/users/:userId/recommended-jobs`
   - Returns job IDs pre-filtered by `above_threshold` and sorted by score (best first)
   - Uses tier-aware thresholds:
     - Specialists: 45% threshold for generic jobs, 50% for specialized
     - Generalists: 35% threshold for generic jobs, 50% for specialized
+  - **Country/Language Filtering:**
+    - Jobs are filtered if user's country doesn't match job's country requirements
+    - Jobs are filtered if user doesn't speak any of job's required languages
   - Response includes:
     - `job_ids`: Simple list of job IDs for easy Bubble integration
     - `jobs`: Detailed list with scores and thresholds
     - `user_expertise_tier`: User's tier for debugging
     - `count`, `total_above_threshold`: Stats
+    - `skipped_by_country`, `skipped_by_language`: Filtering stats
   - Optional `?limit=N` query param to limit results
 
-### Bubble Implementation (To Do)
+### Bubble Implementation (Complete)
 
 #### Step 26: Add API Connector
 
-- [ ] Add `Get recommended jobs for user` API call
+- [x] Add `Get recommended jobs for user` API call
   - Method: `GET`
-  - URL: `https://your-render-url/v1/users/[user_id]/recommended-jobs`
-  - Headers: `Authorization: Bearer [api_key]`
+  - URL: `https://user-capsule-upsert-service.onrender.com/v1/users/[user_id]/recommended-jobs`
+  - Headers: `Authorization: Bearer [api_key]` (shared header)
   - Parameters: `user_id` (required, path)
 
 #### Step 27: Create Backend Workflow `update-recommended-jobs-for-user`
 
-**Configuration:**
-- Endpoint name: `update-recommended-jobs-for-user`
-- Parameter: `user` (User type, required)
-- Ignore privacy rules: Yes
+- [x] **Configuration:**
+  - Endpoint name: `update-recommended-jobs-for-user`
+  - Parameter: `user` (User type, required)
+  - Ignore privacy rules: Yes
 
-**Step 1: Call Get recommended jobs for user API**
-- `user_id`: user's unique id
+- [x] **Step 1:** Call Get recommended jobs for user API
+  - `user_id`: user's unique id
 
-**Step 2: Make changes to User**
-- Thing to change: `user` parameter
-- `lblr_recommended_jobs` set list = Search for Jobs where:
-  - `unique id` is in `Result of step 1's job_ids`
-  - `:sorted by` Result of step 1's job_ids order (preserve API sort order)
+- [x] **Step 2:** Make changes to User
+  - Thing to change: `user` parameter
+  - `lblr_recommended_jobs` set list = Search for Jobs where `unique id` is in `Result of step 1's job_ids`
 
-*Note: The API returns jobs pre-sorted by score, so just preserving the order maps correctly.*
+*Note: The API returns jobs pre-sorted by score, so preserving the order maps correctly.*
 
 #### Step 28: Wire Trigger - After User Profile Update
 
-Modify `upsert-capsules-user` workflow:
-- [ ] Add Step 3: Schedule API workflow `update-recommended-jobs-for-user`
-  - user: User parameter
-  - Scheduled date: Current date/time
+- [x] Modify `upsert-capsules-user` workflow:
+  - Add Step 3: Schedule API workflow `update-recommended-jobs-for-user`
+    - user: User parameter
+    - Scheduled date: Current date/time
 
 #### Step 29: Wire Trigger - After New Job Posted
 
-Modify `upsert-capsules-job` workflow (after the re-notify step):
-- [ ] Add Step 5: Schedule API workflow on a list `update-recommended-jobs-for-user`
-  - List to run on: Search for Users where unique id is in Result of step 3's `newly_qualified_user_ids`
-  - user: This User
-  - Scheduled date: Current date/time
-  - Only when: Result of step 3's `newly_qualified_user_ids:count > 0`
+- [x] Modify `upsert-capsules-job` workflow (after the re-notify step):
+  - Add Step 5: Schedule API workflow on a list `update-recommended-jobs-for-user`
+    - List to run on: Search for Users where unique id is in Result of step 3's `newly_qualified_user_ids`
+    - user: This User
+    - Scheduled date: Current date/time
+    - Only when: Result of step 3's `newly_qualified_user_ids:count > 0`
 
-#### Step 30: Wire Trigger - New Job Notifications
+#### Step 30: Wire Triggers - Metadata Changes
 
-Modify the notify flow for brand new jobs:
-- [ ] After emails sent, schedule `update-recommended-jobs-for-user` for qualifying users
+- [x] Modify `update-user-metadata` workflow:
+  - Add step to schedule `update-recommended-jobs-for-user` for the user
+  - Triggers when user changes country or languages
+
+- [x] Modify `update-job-metadata` workflow:
+  - Add step to schedule `update-recommended-jobs-for-user` for qualifying users
+  - Triggers when job changes countries or languages
+  - Only when: Result of re-notify step's `newly_qualified_user_ids:count > 0`
 
 ### Triggers Summary
 
 | Trigger | Action |
 |---------|--------|
 | User completes onboarding | Call `update-recommended-jobs-for-user` |
-| User updates profile | Auto-triggered via `upsert-capsules-user` |
+| User updates profile (content) | Auto-triggered via `upsert-capsules-user` |
+| User updates profile (metadata) | Auto-triggered via `update-user-metadata` |
 | New job posted | Updates qualifying users via `upsert-capsules-job` |
-| Job edited (newly qualifying users) | Updates via re-notify step |
+| Job edited (content, newly qualifying users) | Updates via `upsert-capsules-job` re-notify step |
+| Job edited (metadata, newly qualifying users) | Updates via `update-job-metadata` |
 
 ### Verification Tests
 
@@ -177,10 +187,12 @@ Modify the notify flow for brand new jobs:
 - [ ] **Step 33:** Test: Edit user profile → verify `lblr_recommended_jobs` refreshes automatically
 - [ ] **Step 34:** Test: Post a new job → verify qualifying users' `lblr_recommended_jobs` includes the new job
 - [ ] **Step 35:** Test: Specialist user sees fewer generic jobs than a generalist user (tier-aware thresholds)
+- [ ] **Step 36:** Test: User with mismatched country doesn't see country-restricted jobs
+- [ ] **Step 37:** Test: User without required language doesn't see language-restricted jobs
 
 ---
 
 ## Current Progress
 
-**Completed:** Steps 1-17 (Data model, API, sync workflows, upsert updates, database triggers), Step 26 (Recommended jobs API)
-**Next Step:** Step 18 (Testing), Step 23-24 (Pre-deployment wiring), or Step 27-30 (Recommended jobs Bubble workflows)
+**Completed:** Steps 1-17 (Data model, API, sync workflows, upsert updates, database triggers), Steps 26-30 (Recommended jobs feature)
+**Next Step:** Step 18-22 (Debounced sync testing), Step 23-25 (Pre-deployment wiring), Step 31-37 (Recommended jobs testing)
