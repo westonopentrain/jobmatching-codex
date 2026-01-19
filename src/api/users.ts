@@ -774,9 +774,11 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Get user expertise tier from metadata
+      // Get user metadata (expertise tier, country, languages)
       const userMetadata = userVectors[userDomainVectorId]?.metadata as Record<string, unknown> | undefined;
       const userExpertiseTier = (userMetadata?.expertise_tier as string | undefined) ?? undefined;
+      const userCountry = (userMetadata?.country as string | undefined) ?? undefined;
+      const userLanguages = (userMetadata?.languages as string[] | undefined) ?? [];
 
       // Get all active jobs
       const activeJobs = await getActiveJobs();
@@ -810,6 +812,10 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         aboveThreshold: boolean;
       }> = [];
 
+      let skippedByCountry = 0;
+      let skippedByLanguage = 0;
+      let skippedNoVectors = 0;
+
       for (const job of activeJobs) {
         const domainVectorId = `job_${job.id}::domain`;
         const taskVectorId = `job_${job.id}::task`;
@@ -819,12 +825,51 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
 
         if (!jobDomainVector || !jobTaskVector || jobDomainVector.length === 0 || jobTaskVector.length === 0) {
           // Skip jobs without vectors
+          skippedNoVectors++;
           continue;
         }
 
-        // Get job classification from metadata
+        // Get job classification and requirements from metadata
         const jobMetadata = jobVectors[domainVectorId]?.metadata as Record<string, unknown> | undefined;
         const jobClass = (jobMetadata?.job_class as JobClass | undefined) ?? 'generic';
+        const jobCountries = (jobMetadata?.countries as string[] | undefined) ?? [];
+        const jobLanguages = (jobMetadata?.languages as string[] | undefined) ?? [];
+
+        // Country filter: if job has country requirements, user must be in one of them
+        if (jobCountries.length > 0) {
+          if (!userCountry) {
+            // Job requires specific countries but user has no country set - skip
+            skippedByCountry++;
+            continue;
+          }
+          const userCountryLower = userCountry.toLowerCase();
+          const matchesCountry = jobCountries.some(
+            (c) => c.toLowerCase() === userCountryLower
+          );
+          if (!matchesCountry) {
+            // User's country doesn't match job's requirements - skip
+            skippedByCountry++;
+            continue;
+          }
+        }
+
+        // Language filter: if job has language requirements, user must speak at least one
+        if (jobLanguages.length > 0) {
+          if (userLanguages.length === 0) {
+            // Job requires specific languages but user has none set - skip
+            skippedByLanguage++;
+            continue;
+          }
+          const userLanguagesLower = new Set(userLanguages.map((l) => l.toLowerCase()));
+          const matchesLanguage = jobLanguages.some(
+            (l) => userLanguagesLower.has(l.toLowerCase())
+          );
+          if (!matchesLanguage) {
+            // User doesn't speak any of the job's required languages - skip
+            skippedByLanguage++;
+            continue;
+          }
+        }
 
         // Calculate cosine similarity scores
         const domainScore = cosineSimilarity(userDomainVector, jobDomainVector);
@@ -865,8 +910,14 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           event: 'users.recommended_jobs.complete',
           userId,
           userTier: userExpertiseTier,
+          userCountry,
+          userLanguages,
           activeJobs: activeJobs.length,
+          skippedByCountry,
+          skippedByLanguage,
+          skippedNoVectors,
           scoredJobs: jobScores.length,
+          aboveThreshold: recommendedJobs.length,
           recommendedJobs: limitedJobs.length,
           elapsedMs: elapsedRounded,
         },
@@ -879,8 +930,19 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(200).send({
         user_id: userId,
         user_expertise_tier: userExpertiseTier,
+        user_country: userCountry ?? null,
+        user_languages: userLanguages,
         count: limitedJobs.length,
         total_above_threshold: recommendedJobs.length,
+        // Filtering stats for debugging
+        filtering: {
+          active_jobs: activeJobs.length,
+          skipped_by_country: skippedByCountry,
+          skipped_by_language: skippedByLanguage,
+          skipped_no_vectors: skippedNoVectors,
+          scored: jobScores.length,
+          below_threshold: jobScores.length - recommendedJobs.length,
+        },
         // Simple job_ids list for easy Bubble integration
         job_ids: limitedJobs.map((j) => j.jobId),
         // Detailed jobs list with scores
