@@ -23,6 +23,7 @@ import {
   getPendingNotifications,
   markUsersNotified,
   deleteJobQualifications,
+  findNewlyQualifyingUsers,
   QualificationResult,
 } from '../services/qualifications';
 
@@ -1380,6 +1381,229 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       log.error({ err: error, elapsedMs: Math.round(elapsedMs) }, 'Unexpected error during evaluate');
       const appError = new AppError({
         code: 'EVALUATE_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // RE-NOTIFY endpoint - find users who NEWLY qualify after a job edit
+  // Returns only users who qualify now but weren't previously notified
+  const reNotifySchema = z.object({
+    // Country/language filters - users must match at least one of each
+    available_countries: z.array(z.string()).optional(),
+    available_languages: z.array(z.string()).optional(),
+    // Safety cap - max number of users to notify even if more qualify
+    max_notifications: z.number().int().positive().max(10000).default(500),
+  });
+
+  fastify.post('/v1/jobs/:jobId/re-notify', async (request, reply) => {
+    const requestId = request.id as string;
+    const log = request.log.child({ route: 'jobs.re-notify', requestId });
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { jobId } = request.params as { jobId: string };
+      if (!jobId || typeof jobId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Job ID is required',
+        });
+      }
+
+      const parsed = reNotifySchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Invalid request body',
+          details: { issues: parsed.error.issues },
+        });
+      }
+
+      const { available_countries, available_languages, max_notifications } = parsed.data;
+
+      // Fetch job vectors from Pinecone
+      const domainVectorId = `job_${jobId}::domain`;
+      const taskVectorId = `job_${jobId}::task`;
+      const usersNamespace = getEnv('PINECONE_USERS_NAMESPACE');
+
+      const vectors = await fetchVectors([domainVectorId, taskVectorId]);
+      if (!vectors[domainVectorId] || !vectors[taskVectorId]) {
+        throw new AppError({
+          code: 'JOB_NOT_FOUND',
+          statusCode: 404,
+          message: 'Job vectors not found in Pinecone. Upsert the job first.',
+        });
+      }
+
+      const domainEmbedding = vectors[domainVectorId].values;
+      const taskEmbedding = vectors[taskVectorId].values;
+
+      if (!isValidVector(domainEmbedding) || !isValidVector(taskEmbedding)) {
+        throw new AppError({
+          code: 'INVALID_VECTORS',
+          statusCode: 500,
+          message: 'Job vectors have invalid dimensions',
+        });
+      }
+
+      const jobMetadata = vectors[domainVectorId].metadata as Record<string, unknown> | undefined;
+      const jobClass = (jobMetadata?.job_class as JobClass) ?? 'generic';
+      const jobTitle = (jobMetadata?.title as string) ?? undefined;
+
+      log.info(
+        { event: 're-notify.fetched_vectors', jobId, jobClass },
+        'Fetched job vectors for re-notify'
+      );
+
+      // Query users matching country/language filters
+      const filterOptions: Parameters<typeof queryUsersByFilter>[0] = {
+        jobVector: domainEmbedding,
+        topK: NOTIFY_TOPK,
+      };
+      // Use request filters if provided, otherwise fall back to job metadata
+      const countries = available_countries ?? (jobMetadata?.countries as string[] | undefined);
+      const languages = available_languages ?? (jobMetadata?.languages as string[] | undefined);
+      if (countries) filterOptions.countries = countries;
+      if (languages) filterOptions.languages = languages;
+      if (usersNamespace) filterOptions.namespace = usersNamespace;
+
+      const domainMatches = await queryUsersByFilter(filterOptions);
+      const poolSize = domainMatches.length;
+
+      log.info(
+        { event: 're-notify.users_queried', jobId, matchCount: poolSize },
+        'Queried users for re-notify'
+      );
+
+      if (poolSize === 0) {
+        const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+        return reply.status(200).send({
+          status: 'ok',
+          job_id: jobId,
+          newly_qualified_user_ids: [],
+          total_qualified: 0,
+          previously_notified: 0,
+          elapsed_ms: Math.round(elapsedMs),
+        });
+      }
+
+      // Calculate pool size multiplier for thresholds
+      let poolSizeMultiplier = 1.0;
+      if (poolSize > 0 && poolSize < 30) {
+        poolSizeMultiplier = 0.6;
+      } else if (poolSize >= 30 && poolSize < 100) {
+        poolSizeMultiplier = 0.8;
+      }
+
+      const userIds = domainMatches.map((m) => m.userId);
+      const domainScoreMap = new Map(domainMatches.map((m) => [m.userId, m.score]));
+      const userMetadataMap = new Map(domainMatches.map((m) => [m.userId, m.metadata]));
+
+      // Get task scores in chunks
+      const taskScoreMap = new Map<string, number>();
+      const userChunks = chunkArray(userIds, FILTER_CHUNK_SIZE);
+
+      for (const chunk of userChunks) {
+        const queryOptions: Parameters<typeof queryByVector>[0] = {
+          values: taskEmbedding,
+          topK: chunk.length,
+          filter: {
+            type: 'user',
+            section: 'task',
+            user_id: { $in: chunk },
+          },
+        };
+        if (usersNamespace) queryOptions.namespace = usersNamespace;
+
+        const taskMatches = await queryByVector(queryOptions);
+        for (const match of taskMatches) {
+          const metadata = match.metadata as Record<string, unknown> | undefined;
+          const userId = metadata?.user_id as string | undefined;
+          if (userId) {
+            taskScoreMap.set(userId, match.score);
+          }
+        }
+      }
+
+      // Calculate final scores
+      const weights = getWeightProfile(jobClass);
+      const baseThreshold = getBaseMinThreshold(jobClass);
+      const threshold = baseThreshold * poolSizeMultiplier;
+
+      const qualificationResults: QualificationResult[] = userIds.map((userId) => {
+        const domainScore = domainScoreMap.get(userId) ?? 0;
+        const taskScore = taskScoreMap.get(userId) ?? 0;
+        const finalScore = weights.w_domain * domainScore + weights.w_task * taskScore;
+        const qualifies = finalScore >= threshold;
+
+        return {
+          userId,
+          qualifies,
+          finalScore,
+          domainScore,
+          taskScore,
+          thresholdUsed: threshold,
+          filterReason: qualifies ? null : `below_threshold (${(threshold * 100).toFixed(0)}%)`,
+        };
+      });
+
+      // Find users who newly qualify (qualify now but not previously notified)
+      const { newlyQualifiedUserIds, totalQualified, previouslyNotified } =
+        await findNewlyQualifyingUsers(jobId, qualificationResults);
+
+      // Apply safety cap
+      const cappedUserIds = newlyQualifiedUserIds.slice(0, max_notifications);
+
+      // Store updated qualification results (non-blocking)
+      storeQualificationResults(jobId, qualificationResults, {
+        markNotified: true,
+        notifiedVia: 'job_edit',
+        jobTitle,
+      });
+
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+
+      log.info(
+        {
+          event: 're-notify.complete',
+          jobId,
+          totalQualified,
+          previouslyNotified,
+          newlyQualified: newlyQualifiedUserIds.length,
+          capped: cappedUserIds.length,
+          elapsedMs: Math.round(elapsedMs),
+        },
+        'Re-notify processing complete'
+      );
+
+      return reply.status(200).send({
+        status: 'ok',
+        job_id: jobId,
+        newly_qualified_user_ids: cappedUserIds,
+        total_qualified: totalQualified,
+        previously_notified: previouslyNotified,
+        elapsed_ms: Math.round(elapsedMs),
+      });
+    } catch (error) {
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+
+      if (error instanceof AppError) {
+        log.warn(
+          { error: error.message, code: error.code, elapsedMs: Math.round(elapsedMs) },
+          'Handled re-notify error'
+        );
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error, elapsedMs: Math.round(elapsedMs) }, 'Unexpected error during re-notify');
+      const appError = new AppError({
+        code: 'RE_NOTIFY_FAILURE',
         statusCode: 500,
         message: 'Unexpected server error',
       });
