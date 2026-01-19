@@ -962,12 +962,14 @@ This provides true debouncing while enabling immediate notifications after chang
 All upsert and metadata update endpoints now accept an optional `source` parameter to track where each sync originated. This enables distinguishing between manual operations and scheduled syncs in the admin dashboard.
 
 **Valid source values:**
-| Source | Description |
-| ------ | ----------- |
-| `manual` | User clicked a manual upsert button in Bubble |
-| `scheduled_content` | From `user-content-changed` or `job-content-changed` trigger |
-| `scheduled_metadata` | From `user-metadata-changed` or `job-metadata-changed` trigger |
-| `bulk_import` | Migration or bulk import scripts |
+| Source | Description | Status |
+| ------ | ----------- | ------ |
+| `manual` | User clicked a manual upsert button in Bubble | ✅ Implemented |
+| `scheduled_content` | From `user-content-changed` or `job-content-changed` trigger | ✅ Implemented |
+| `scheduled_metadata` | From `user-metadata-changed` or `job-metadata-changed` trigger | ✅ Implemented |
+| `new_job` | New job posted on the platform | ⏳ Pre-deployment |
+| `new_user` | New user signs up | ⏳ Pre-deployment |
+| `bulk_import` | Migration or bulk import scripts | As needed |
 
 ### Updating Bubble Workflows to Pass Source
 
@@ -1042,3 +1044,14 @@ Filter in Render dashboard:
 - `source":"scheduled_content"` - see all scheduled content syncs
 - `source":"scheduled_metadata"` - see all scheduled metadata syncs
 - `source":"manual"` - see manual operations
+
+---
+
+## Pre-Deployment Checklist
+
+Before going live, complete these remaining tasks:
+
+- [ ] **Wire up new job creation** to call `upsert-capsules-job` with `source: "new_job"`
+- [ ] **Wire up new user signup** to call `upsert-capsules-user` with `source: "new_user"`
+
+See `docs/bubble-implementation-checklist.md` for detailed tracking.
