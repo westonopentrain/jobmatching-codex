@@ -334,3 +334,56 @@ model AuditJobMetadataUpdate {
   @@index([jobId])
   @@index([createdAt])
 }
+
+// Track job active status (synced from Bubble)
+// Used to determine which jobs should be evaluated for notifications
+model Job {
+  id        String   @id @map("job_id")
+  isActive  Boolean  @default(true) @map("is_active")
+  title     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  qualifications JobUserQualification[]
+
+  @@map("jobs")
+}
+
+// Track qualification state for each job-user pair
+// Persists who qualifies for each job and notification status
+model JobUserQualification {
+  id            Int       @id @default(autoincrement())
+  jobId         String    @map("job_id")
+  userId        String    @map("user_id")
+
+  // Qualification results
+  qualifies     Boolean   @default(false)
+  finalScore    Float?    @map("final_score")
+  domainScore   Float?    @map("domain_score")
+  taskScore     Float?    @map("task_score")
+  thresholdUsed Float?    @map("threshold_used")
+  filterReason  String?   @map("filter_reason")
+
+  // Notification tracking
+  notifiedAt    DateTime? @map("notified_at")
+  notifiedVia   String?   @map("notified_via")  // 'job_post', 'profile_update', 'manual'
+
+  // Timestamps
+  evaluatedAt   DateTime  @map("evaluated_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Denormalized for efficient queries
+  jobActive     Boolean   @default(false) @map("job_active")
+
+  // Relations
+  job           Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, userId])
+  @@index([jobId])
+  @@index([userId])
+  @@index([jobId, qualifies, notifiedAt])
+  @@index([jobActive, qualifies])
+  @@map("job_user_qualifications")
+}

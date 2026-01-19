@@ -14,6 +14,17 @@ import { classifyJob, getWeightProfile, JobClass } from '../services/job-classif
 import { auditJobUpsert, auditJobNotify, auditJobMetadataUpdate } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
 import { logger } from '../utils/logger';
+import {
+  ensureJobExists,
+  setJobActiveStatus,
+  getJob,
+  storeQualificationResults,
+  getJobQualifications,
+  getPendingNotifications,
+  markUsersNotified,
+  deleteJobQualifications,
+  QualificationResult,
+} from '../services/qualifications';
 
 const fieldSchema = z.object({
   Instructions: z.string().optional(),
@@ -36,6 +47,7 @@ const jobUpsertSchema = z.object({
   job_id: z.string().min(1),
   source: z.string().nullable().optional(), // 'manual', 'scheduled_content', 'scheduled_metadata', 'bulk_import'
   title: z.string().optional(),
+  is_active: z.boolean().optional(), // Track active status for notification tracking
   fields: fieldSchema,
 });
 
@@ -44,6 +56,7 @@ const jobNotifySchema = z.object({
   job_id: z.string().min(1),
   source: z.string().nullable().optional(), // 'manual', 'scheduled_content', 'bulk_import'
   title: z.string().optional(),
+  is_active: z.boolean().optional(), // Track active status for notification tracking
   fields: fieldSchema,
   // Country/language filters - users must match at least one of each
   available_countries: z.array(z.string()).optional(),
@@ -190,6 +203,12 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         'Upserted job vectors to Pinecone'
       );
 
+      // Create/update job record for qualification tracking
+      const jobOptions: { title?: string; isActive?: boolean } = {};
+      if (normalized.title !== undefined) jobOptions.title = normalized.title;
+      if (parsed.data.is_active !== undefined) jobOptions.isActive = parsed.data.is_active;
+      await ensureJobExists(normalized.jobId, jobOptions);
+
       const now = new Date().toISOString();
       const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
       const elapsedRounded = Number(elapsedMs.toFixed(2));
@@ -303,6 +322,9 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
           log.info({ event: 'jobs.delete.audit', jobId, count: auditDeleted }, 'Deleted job audit records');
         }
       }
+
+      // Delete job qualifications (cascades from Job table)
+      await deleteJobQualifications(jobId);
 
       return reply.status(200).send({
         status: 'ok',
@@ -733,6 +755,31 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         results: auditResults,
       });
 
+      // Store qualification results for tracking (non-blocking)
+      const qualificationResults: QualificationResult[] = scoredUsers.map((u) => ({
+        userId: u.userId,
+        qualifies: notifiedUserIds.has(u.userId),
+        finalScore: u.finalScore,
+        domainScore: u.domainScore,
+        taskScore: u.taskScore,
+        thresholdUsed: u.threshold,
+        filterReason: !u.aboveThreshold
+          ? `below_threshold (${(u.threshold * 100).toFixed(0)}%)`
+          : subjectMatterFilteredUserIds.has(u.userId)
+          ? 'subject_matter_mismatch'
+          : !notifiedUserIds.has(u.userId)
+          ? 'max_cap'
+          : null,
+      }));
+
+      const storeOptions: { markNotified?: boolean; notifiedVia?: string; jobTitle?: string; isActive?: boolean } = {
+        markNotified: true,
+        notifiedVia: 'job_post',
+        isActive: parsed.data.is_active ?? true,
+      };
+      if (normalized.title !== undefined) storeOptions.jobTitle = normalized.title;
+      storeQualificationResults(job_id, qualificationResults, storeOptions);
+
       return reply.status(200).send({
         status: 'ok',
         job_id,
@@ -889,6 +936,450 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       log.error({ err: error, event: 'jobs.metadata.error', elapsedMs: elapsedRounded }, 'Unexpected error during job metadata update');
       const appError = new AppError({
         code: 'JOB_METADATA_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // PATCH endpoint for updating job active status
+  const jobStatusSchema = z.object({
+    is_active: z.boolean(),
+    title: z.string().optional(),
+  });
+
+  fastify.patch('/v1/jobs/:jobId/status', async (request, reply) => {
+    const requestId = request.id as string;
+    const log = request.log.child({ route: 'jobs.status', requestId });
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { jobId } = request.params as { jobId: string };
+      if (!jobId || typeof jobId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Job ID is required',
+        });
+      }
+
+      const parsed = jobStatusSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Invalid request body',
+          details: { issues: parsed.error.issues },
+        });
+      }
+
+      const { is_active, title } = parsed.data;
+      const result = await setJobActiveStatus(jobId, is_active, title);
+
+      if (!result.success) {
+        throw new AppError({
+          code: 'DATABASE_ERROR',
+          statusCode: 500,
+          message: 'Failed to update job status',
+        });
+      }
+
+      log.info(
+        { event: 'jobs.status.updated', jobId, isActive: is_active },
+        'Job status updated'
+      );
+
+      return reply.status(200).send({
+        status: 'ok',
+        job: result.job,
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        log.warn({ error: error.message, code: error.code }, 'Handled job status error');
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error }, 'Unexpected error during job status update');
+      const appError = new AppError({
+        code: 'JOB_STATUS_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // GET endpoint for job qualifications
+  fastify.get('/v1/jobs/:jobId/qualifications', async (request, reply) => {
+    const log = request.log.child({ route: 'jobs.qualifications' });
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { jobId } = request.params as { jobId: string };
+      if (!jobId || typeof jobId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Job ID is required',
+        });
+      }
+
+      const { qualifies_only, limit, offset } = request.query as {
+        qualifies_only?: string;
+        limit?: string;
+        offset?: string;
+      };
+
+      const job = await getJob(jobId);
+      const qualOptions: { qualifiesOnly?: boolean; limit?: number; offset?: number } = {};
+      if (qualifies_only === 'true') qualOptions.qualifiesOnly = true;
+      if (limit) qualOptions.limit = parseInt(limit, 10);
+      if (offset) qualOptions.offset = parseInt(offset, 10);
+      const { qualifications, total } = await getJobQualifications(jobId, qualOptions);
+
+      log.info(
+        { event: 'jobs.qualifications.query', jobId, count: qualifications.length, total },
+        'Queried job qualifications'
+      );
+
+      return reply.status(200).send({
+        job_id: jobId,
+        job_active: job?.isActive ?? false,
+        job_title: job?.title ?? null,
+        count: qualifications.length,
+        total,
+        qualifications: qualifications.map((q) => ({
+          user_id: q.userId,
+          qualifies: q.qualifies,
+          final_score: q.finalScore,
+          domain_score: q.domainScore,
+          task_score: q.taskScore,
+          threshold_used: q.thresholdUsed,
+          filter_reason: q.filterReason,
+          notified_at: q.notifiedAt,
+          notified_via: q.notifiedVia,
+          evaluated_at: q.evaluatedAt,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        log.warn({ error: error.message, code: error.code }, 'Handled job qualifications error');
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error }, 'Unexpected error during job qualifications query');
+      const appError = new AppError({
+        code: 'JOB_QUALIFICATIONS_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // GET endpoint for pending notifications
+  fastify.get('/v1/jobs/:jobId/pending-notifications', async (request, reply) => {
+    const log = request.log.child({ route: 'jobs.pending' });
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { jobId } = request.params as { jobId: string };
+      if (!jobId || typeof jobId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Job ID is required',
+        });
+      }
+
+      const { limit, offset } = request.query as { limit?: string; offset?: string };
+
+      const job = await getJob(jobId);
+      const pendingOptions: { limit?: number; offset?: number } = {};
+      if (limit) pendingOptions.limit = parseInt(limit, 10);
+      if (offset) pendingOptions.offset = parseInt(offset, 10);
+      const { pending, total } = await getPendingNotifications(jobId, pendingOptions);
+
+      log.info(
+        { event: 'jobs.pending.query', jobId, count: pending.length, total },
+        'Queried pending notifications'
+      );
+
+      return reply.status(200).send({
+        job_id: jobId,
+        job_active: job?.isActive ?? false,
+        job_title: job?.title ?? null,
+        count: pending.length,
+        total,
+        pending_users: pending.map((q) => ({
+          user_id: q.userId,
+          final_score: q.finalScore,
+          domain_score: q.domainScore,
+          task_score: q.taskScore,
+          threshold_used: q.thresholdUsed,
+          evaluated_at: q.evaluatedAt,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        log.warn({ error: error.message, code: error.code }, 'Handled pending notifications error');
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error }, 'Unexpected error during pending notifications query');
+      const appError = new AppError({
+        code: 'PENDING_NOTIFICATIONS_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // POST endpoint to mark users as notified
+  const markNotifiedSchema = z.object({
+    user_ids: z.array(z.string()).min(1),
+    notified_via: z.string().optional(),
+  });
+
+  fastify.post('/v1/jobs/:jobId/mark-notified', async (request, reply) => {
+    const log = request.log.child({ route: 'jobs.mark-notified' });
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { jobId } = request.params as { jobId: string };
+      if (!jobId || typeof jobId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Job ID is required',
+        });
+      }
+
+      const parsed = markNotifiedSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Invalid request body',
+          details: { issues: parsed.error.issues },
+        });
+      }
+
+      const { user_ids, notified_via } = parsed.data;
+      const { updated } = await markUsersNotified(jobId, user_ids, notified_via ?? 'manual');
+
+      log.info(
+        { event: 'jobs.mark_notified', jobId, requested: user_ids.length, updated },
+        'Marked users as notified'
+      );
+
+      return reply.status(200).send({
+        status: 'ok',
+        job_id: jobId,
+        users_requested: user_ids.length,
+        users_updated: updated,
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        log.warn({ error: error.message, code: error.code }, 'Handled mark notified error');
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error }, 'Unexpected error during mark notified');
+      const appError = new AppError({
+        code: 'MARK_NOTIFIED_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // POST endpoint to manually trigger evaluation
+  const evaluateSchema = z.object({
+    user_ids: z.array(z.string()).optional(), // If not provided, evaluate all users
+  });
+
+  fastify.post('/v1/jobs/:jobId/evaluate', async (request, reply) => {
+    const requestId = request.id as string;
+    const log = request.log.child({ route: 'jobs.evaluate', requestId });
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { jobId } = request.params as { jobId: string };
+      if (!jobId || typeof jobId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Job ID is required',
+        });
+      }
+
+      const parsed = evaluateSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Invalid request body',
+          details: { issues: parsed.error.issues },
+        });
+      }
+
+      // Fetch job vectors from Pinecone
+      const domainVectorId = `job_${jobId}::domain`;
+      const taskVectorId = `job_${jobId}::task`;
+      const usersNamespace = getEnv('PINECONE_USERS_NAMESPACE');
+
+      const vectors = await fetchVectors([domainVectorId, taskVectorId]);
+      if (!vectors[domainVectorId] || !vectors[taskVectorId]) {
+        throw new AppError({
+          code: 'JOB_NOT_FOUND',
+          statusCode: 404,
+          message: 'Job vectors not found in Pinecone. Upsert the job first.',
+        });
+      }
+
+      const domainEmbedding = vectors[domainVectorId].values;
+      const taskEmbedding = vectors[taskVectorId].values;
+      const jobMetadata = vectors[domainVectorId].metadata as Record<string, unknown> | undefined;
+      const jobClass = (jobMetadata?.job_class as JobClass) ?? 'generic';
+      const jobTitle = (jobMetadata?.title as string) ?? undefined;
+
+      log.info(
+        { event: 'evaluate.fetched_vectors', jobId, jobClass },
+        'Fetched job vectors for evaluation'
+      );
+
+      // Query all users matching the job's country/language filters (if any)
+      const filterOptions: Parameters<typeof queryUsersByFilter>[0] = {
+        jobVector: domainEmbedding,
+        topK: 10000,
+      };
+      const countries = jobMetadata?.countries as string[] | undefined;
+      const languages = jobMetadata?.languages as string[] | undefined;
+      if (countries) filterOptions.countries = countries;
+      if (languages) filterOptions.languages = languages;
+      if (usersNamespace) filterOptions.namespace = usersNamespace;
+
+      const domainMatches = await queryUsersByFilter(filterOptions);
+
+      // Filter to specific users if provided
+      let targetUsers = domainMatches;
+      if (parsed.data.user_ids && parsed.data.user_ids.length > 0) {
+        const targetSet = new Set(parsed.data.user_ids);
+        targetUsers = domainMatches.filter((m) => targetSet.has(m.userId));
+      }
+
+      if (targetUsers.length === 0) {
+        const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+        return reply.status(200).send({
+          status: 'ok',
+          job_id: jobId,
+          users_evaluated: 0,
+          elapsed_ms: Math.round(elapsedMs),
+        });
+      }
+
+      const userIds = targetUsers.map((m) => m.userId);
+      const domainScoreMap = new Map(targetUsers.map((m) => [m.userId, m.score]));
+
+      // Get task scores
+      const taskScoreMap = new Map<string, number>();
+      const userChunks = chunkArray(userIds, FILTER_CHUNK_SIZE);
+
+      for (const chunk of userChunks) {
+        const queryOptions: Parameters<typeof queryByVector>[0] = {
+          values: taskEmbedding,
+          topK: chunk.length,
+          filter: {
+            type: 'user',
+            section: 'task',
+            user_id: { $in: chunk },
+          },
+        };
+        if (usersNamespace) queryOptions.namespace = usersNamespace;
+
+        const taskMatches = await queryByVector(queryOptions);
+        for (const match of taskMatches) {
+          const metadata = match.metadata as Record<string, unknown> | undefined;
+          const userId = metadata?.user_id as string | undefined;
+          if (userId) {
+            taskScoreMap.set(userId, match.score);
+          }
+        }
+      }
+
+      // Calculate final scores
+      const weights = getWeightProfile(jobClass);
+      const baseThreshold = getBaseMinThreshold(jobClass);
+
+      const qualificationResults: QualificationResult[] = userIds.map((userId) => {
+        const domainScore = domainScoreMap.get(userId) ?? 0;
+        const taskScore = taskScoreMap.get(userId) ?? 0;
+        const finalScore = weights.w_domain * domainScore + weights.w_task * taskScore;
+        const qualifies = finalScore >= baseThreshold;
+
+        return {
+          userId,
+          qualifies,
+          finalScore,
+          domainScore,
+          taskScore,
+          thresholdUsed: baseThreshold,
+          filterReason: qualifies ? null : `below_threshold (${(baseThreshold * 100).toFixed(0)}%)`,
+        };
+      });
+
+      // Store results
+      const { stored, errors } = await storeQualificationResults(jobId, qualificationResults, {
+        markNotified: false,
+        jobTitle,
+      });
+
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+
+      log.info(
+        {
+          event: 'evaluate.complete',
+          jobId,
+          usersEvaluated: qualificationResults.length,
+          stored,
+          errors,
+          elapsedMs: Math.round(elapsedMs),
+        },
+        'Manual evaluation complete'
+      );
+
+      return reply.status(200).send({
+        status: 'ok',
+        job_id: jobId,
+        users_evaluated: qualificationResults.length,
+        qualifications_stored: stored,
+        errors,
+        elapsed_ms: Math.round(elapsedMs),
+      });
+    } catch (error) {
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+
+      if (error instanceof AppError) {
+        log.warn(
+          { error: error.message, code: error.code, elapsedMs: Math.round(elapsedMs) },
+          'Handled evaluate error'
+        );
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error, elapsedMs: Math.round(elapsedMs) }, 'Unexpected error during evaluate');
+      const appError = new AppError({
+        code: 'EVALUATE_FAILURE',
         statusCode: 500,
         message: 'Unexpected server error',
       });
