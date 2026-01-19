@@ -591,3 +591,109 @@ export function auditJobMetadataUpdate(data: JobMetadataUpdateAuditData): void {
     }
   })();
 }
+
+// Re-notify audit types
+export interface ReNotifyAuditData {
+  jobId: string;
+  requestId?: string | undefined;
+  totalQualified: number;
+  previouslyNotified: number;
+  newlyQualified: number;
+  elapsedMs?: number | undefined;
+}
+
+/**
+ * Log a re-notify request to the audit trail (non-blocking)
+ */
+export function auditReNotify(data: ReNotifyAuditData): void {
+  if (!isDatabaseAvailable()) {
+    return;
+  }
+
+  // Fire and forget
+  (async () => {
+    try {
+      const db = getDb();
+      if (!db) return;
+
+      await db.auditReNotify.create({
+        data: {
+          jobId: data.jobId,
+          requestId: data.requestId ?? null,
+          totalQualified: data.totalQualified,
+          previouslyNotified: data.previouslyNotified,
+          newlyQualified: data.newlyQualified,
+          elapsedMs: data.elapsedMs ?? null,
+        },
+      });
+
+      logger.debug(
+        { event: 'audit.re_notify.saved', jobId: data.jobId, newlyQualified: data.newlyQualified },
+        'Re-notify audit record saved'
+      );
+    } catch (error) {
+      logger.error(
+        { event: 'audit.re_notify.error', jobId: data.jobId, error },
+        'Failed to save re-notify audit record'
+      );
+    }
+  })();
+}
+
+// Recommended jobs audit types
+export interface RecommendedJobsAuditData {
+  userId: string;
+  requestId?: string | undefined;
+  expertiseTier?: string | undefined;
+  country?: string | undefined;
+  languages: string[];
+  activeJobs: number;
+  scoredJobs: number;
+  recommendedCount: number;
+  skippedByCountry: number;
+  skippedByLanguage: number;
+  elapsedMs?: number | undefined;
+}
+
+/**
+ * Log a recommended-jobs request to the audit trail (non-blocking)
+ */
+export function auditRecommendedJobs(data: RecommendedJobsAuditData): void {
+  if (!isDatabaseAvailable()) {
+    return;
+  }
+
+  // Fire and forget
+  (async () => {
+    try {
+      const db = getDb();
+      if (!db) return;
+
+      await db.auditRecommendedJobs.create({
+        data: {
+          userId: data.userId,
+          requestId: data.requestId ?? null,
+          expertiseTier: data.expertiseTier ?? null,
+          country: data.country ?? null,
+          languages: data.languages ?? [],
+          activeJobs: data.activeJobs,
+          scoredJobs: data.scoredJobs,
+          recommendedCount: data.recommendedCount,
+          skippedByCountry: data.skippedByCountry,
+          skippedByLanguage: data.skippedByLanguage,
+          elapsedMs: data.elapsedMs ?? null,
+        },
+      });
+
+      logger.debug(
+        { event: 'audit.recommended_jobs.saved', userId: data.userId, recommendedCount: data.recommendedCount },
+        'Recommended jobs audit record saved'
+      );
+    } catch (error) {
+      logger.error(
+        { event: 'audit.recommended_jobs.error', userId: data.userId, error },
+        'Failed to save recommended jobs audit record'
+      );
+    }
+  })();
+}

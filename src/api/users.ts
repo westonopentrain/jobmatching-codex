@@ -10,7 +10,7 @@ import { classifyUser } from '../services/user-classifier';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
 import { upsertVector, deleteVectors, updateVectorMetadata, VectorMetadata, fetchVectors, queryByVector } from '../services/pinecone';
 import { requireEnv, getEnv } from '../utils/env';
-import { auditUserUpsert, auditUserMetadataUpdate } from '../services/audit';
+import { auditUserUpsert, auditUserMetadataUpdate, auditRecommendedJobs } from '../services/audit';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { getUserQualifications, getActiveJobs, storeUserQualificationsForJobs } from '../services/qualifications';
 import { getWeightProfile, JobClass } from '../services/job-classifier';
@@ -923,6 +923,21 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'Completed recommended jobs query'
       );
+
+      // Audit logging (non-blocking)
+      auditRecommendedJobs({
+        userId,
+        requestId,
+        expertiseTier: userExpertiseTier,
+        country: userCountry,
+        languages: userLanguages,
+        activeJobs: activeJobs.length,
+        scoredJobs: jobScores.length,
+        recommendedCount: limitedJobs.length,
+        skippedByCountry,
+        skippedByLanguage,
+        elapsedMs: elapsedRounded,
+      });
 
       // Round scores for response
       const roundScore = (n: number) => Math.round(n * 10000) / 10000;

@@ -1136,4 +1136,131 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       })),
     };
   });
+
+  // Get re-notify events (paginated) - monitoring endpoint
+  fastify.get('/admin/re-notify', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { page = '1', limit = '50' } = request.query as { page?: string; limit?: string };
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [records, total] = await Promise.all([
+      db.auditReNotify.findMany({
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum,
+        select: {
+          id: true,
+          jobId: true,
+          requestId: true,
+          createdAt: true,
+          totalQualified: true,
+          previouslyNotified: true,
+          newlyQualified: true,
+          elapsedMs: true,
+        },
+      }),
+      db.auditReNotify.count(),
+    ]);
+
+    // Get job titles for display
+    const jobIds = [...new Set(records.map((r) => r.jobId))];
+    const jobs = jobIds.length > 0 ? await db.auditJobUpsert.findMany({
+      where: { jobId: { in: jobIds } },
+      orderBy: { createdAt: 'desc' },
+      distinct: ['jobId'],
+      select: { jobId: true, title: true },
+    }) : [];
+    const jobTitleMap = new Map(jobs.map((j) => [j.jobId, j.title]));
+
+    logger.info(
+      { event: 'admin.re_notify.query', count: records.length, total, page: pageNum },
+      'Admin queried re-notify events'
+    );
+
+    return {
+      count: records.length,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+      records: records.map((r) => ({
+        id: r.id,
+        job_id: r.jobId,
+        job_title: jobTitleMap.get(r.jobId) || null,
+        request_id: r.requestId,
+        created_at: r.createdAt,
+        total_qualified: r.totalQualified,
+        previously_notified: r.previouslyNotified,
+        newly_qualified: r.newlyQualified,
+        elapsed_ms: r.elapsedMs,
+      })),
+    };
+  });
+
+  // Get recommended-jobs events (paginated) - monitoring endpoint
+  fastify.get('/admin/recommended-jobs-log', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { page = '1', limit = '50' } = request.query as { page?: string; limit?: string };
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [records, total] = await Promise.all([
+      db.auditRecommendedJobs.findMany({
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum,
+        select: {
+          id: true,
+          userId: true,
+          requestId: true,
+          createdAt: true,
+          expertiseTier: true,
+          country: true,
+          languages: true,
+          activeJobs: true,
+          scoredJobs: true,
+          recommendedCount: true,
+          skippedByCountry: true,
+          skippedByLanguage: true,
+          elapsedMs: true,
+        },
+      }),
+      db.auditRecommendedJobs.count(),
+    ]);
+
+    logger.info(
+      { event: 'admin.recommended_jobs_log.query', count: records.length, total, page: pageNum },
+      'Admin queried recommended-jobs events'
+    );
+
+    return {
+      count: records.length,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+      records: records.map((r) => ({
+        id: r.id,
+        user_id: r.userId,
+        request_id: r.requestId,
+        created_at: r.createdAt,
+        expertise_tier: r.expertiseTier,
+        country: r.country,
+        languages: r.languages,
+        active_jobs: r.activeJobs,
+        scored_jobs: r.scoredJobs,
+        recommended_count: r.recommendedCount,
+        skipped_by_country: r.skippedByCountry,
+        skipped_by_language: r.skippedByLanguage,
+        elapsed_ms: r.elapsedMs,
+      })),
+    };
+  });
 };
