@@ -27,6 +27,14 @@
 
     <!-- Stats Bar -->
     <div id="stats-bar" class="stats-bar">
+      <div class="stat stat-pending">
+        <span class="stat-value" id="stat-pending">-</span>
+        <span class="stat-label">Pending</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-active-jobs">-</span>
+        <span class="stat-label">Active Jobs</span>
+      </div>
       <div class="stat">
         <span class="stat-value" id="stat-jobs">-</span>
         <span class="stat-label">Jobs</span>
@@ -34,10 +42,6 @@
       <div class="stat">
         <span class="stat-value" id="stat-users">-</span>
         <span class="stat-label">Users</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value" id="stat-matches">-</span>
-        <span class="stat-label">Match Requests</span>
       </div>
       <div class="stat">
         <span class="stat-value" id="stat-jobs-24h">-</span>
@@ -48,10 +52,6 @@
         <span class="stat-label">Users (24h)</span>
       </div>
       <div class="stat">
-        <span class="stat-value" id="stat-recs">-</span>
-        <span class="stat-label">Recommendations</span>
-      </div>
-      <div class="stat">
         <span class="stat-value" id="stat-notifications">-</span>
         <span class="stat-label">Notifications</span>
       </div>
@@ -59,18 +59,59 @@
 
     <!-- Tabs -->
     <nav class="tabs">
-      <button class="tab active" data-tab="jobs">Jobs</button>
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="jobs">Jobs</button>
       <button class="tab" data-tab="users">Users</button>
-      <button class="tab" data-tab="matches">Matches</button>
-      <button class="tab" data-tab="recommendations">Recommendations</button>
-      <button class="tab" data-tab="notifications">Notifications</button>
+      <button class="tab" data-tab="pending">Pending</button>
+      <button class="tab" data-tab="notifications">History</button>
       <button class="tab" data-tab="sync">Sync</button>
+      <button class="tab tab-debug" data-tab="debug">Debug</button>
     </nav>
 
     <!-- Tab Content -->
     <main class="tab-content">
+      <!-- Overview Tab -->
+      <div id="overview-tab" class="tab-pane active">
+        <div class="overview-container">
+          <div class="overview-stats">
+            <div class="overview-stat-card">
+              <span class="overview-stat-value" id="overview-active-jobs">-</span>
+              <span class="overview-stat-label">Active Jobs</span>
+            </div>
+            <div class="overview-stat-card pending-highlight">
+              <span class="overview-stat-value" id="overview-pending">-</span>
+              <span class="overview-stat-label">Pending Notifications</span>
+            </div>
+            <div class="overview-stat-card">
+              <span class="overview-stat-value" id="overview-qualified">-</span>
+              <span class="overview-stat-label">Total Qualified</span>
+            </div>
+            <div class="overview-stat-card">
+              <span class="overview-stat-value" id="overview-notified-today">-</span>
+              <span class="overview-stat-label">Notified Today</span>
+            </div>
+          </div>
+          <div class="overview-section">
+            <h3>Active Jobs</h3>
+            <table id="active-jobs-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Job ID</th>
+                  <th>Qualified</th>
+                  <th>Pending</th>
+                  <th>Notified</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="loading" id="overview-loading">Loading...</div>
+      </div>
+
       <!-- Jobs Tab -->
-      <div id="jobs-tab" class="tab-pane active">
+      <div id="jobs-tab" class="tab-pane hidden">
         <div class="toolbar">
           <input type="text" id="job-search" placeholder="Search by Job ID...">
           <button id="job-search-btn">Search</button>
@@ -115,53 +156,28 @@
         <div class="loading" id="users-loading">Loading...</div>
       </div>
 
-      <!-- Matches Tab -->
-      <div id="matches-tab" class="tab-pane hidden">
+      <!-- Pending Notifications Tab -->
+      <div id="pending-tab" class="tab-pane hidden">
         <div class="toolbar">
-          <input type="text" id="match-search" placeholder="Search by Job ID...">
-          <button id="match-search-btn">Search</button>
-          <button id="match-clear-btn">Clear</button>
+          <span class="toolbar-info">Users who qualify but haven't been notified yet</span>
         </div>
-        <table id="matches-table">
+        <table id="pending-table">
           <thead>
             <tr>
               <th>Job</th>
-              <th>Candidates</th>
-              <th>Results</th>
-              <th>Weights</th>
+              <th>User ID</th>
+              <th>Score</th>
               <th>Threshold</th>
-              <th>Created</th>
+              <th>Evaluated</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
-        <div class="loading" id="matches-loading">Loading...</div>
+        <div class="loading" id="pending-loading">Loading...</div>
       </div>
 
-      <!-- Recommendations Tab -->
-      <div id="recommendations-tab" class="tab-pane hidden">
-        <div class="toolbar">
-          <input type="text" id="rec-search" placeholder="Search by User ID...">
-          <button id="rec-search-btn">Search</button>
-          <button id="rec-clear-btn">Clear</button>
-        </div>
-        <table id="recs-table">
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Expertise</th>
-              <th>Jobs Scored</th>
-              <th>Above Threshold</th>
-              <th>Suggested</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <div class="loading" id="recs-loading">Loading...</div>
-      </div>
-
-      <!-- Notifications Tab -->
+      <!-- Notifications History Tab -->
       <div id="notifications-tab" class="tab-pane hidden">
         <div class="toolbar">
           <input type="text" id="notify-search" placeholder="Search by Job ID...">
@@ -210,6 +226,54 @@
           </div>
         </div>
         <div class="loading" id="sync-loading">Loading...</div>
+      </div>
+
+      <!-- Debug Tab (Matches + Recommendations) -->
+      <div id="debug-tab" class="tab-pane hidden">
+        <div class="debug-section">
+          <h3>Match Requests</h3>
+          <div class="toolbar">
+            <input type="text" id="match-search" placeholder="Search by Job ID...">
+            <button id="match-search-btn">Search</button>
+            <button id="match-clear-btn">Clear</button>
+          </div>
+          <table id="matches-table">
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Candidates</th>
+                <th>Results</th>
+                <th>Weights</th>
+                <th>Threshold</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="loading" id="matches-loading">Loading...</div>
+        </div>
+        <div class="debug-section">
+          <h3>Recommendations</h3>
+          <div class="toolbar">
+            <input type="text" id="rec-search" placeholder="Search by User ID...">
+            <button id="rec-search-btn">Search</button>
+            <button id="rec-clear-btn">Clear</button>
+          </div>
+          <table id="recs-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Expertise</th>
+                <th>Jobs Scored</th>
+                <th>Above Threshold</th>
+                <th>Suggested</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="loading" id="recs-loading">Loading...</div>
+        </div>
       </div>
     </main>
 

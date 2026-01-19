@@ -12,6 +12,7 @@ import { upsertVector, deleteVectors, updateVectorMetadata, VectorMetadata } fro
 import { requireEnv } from '../utils/env';
 import { auditUserUpsert, auditUserMetadataUpdate } from '../services/audit';
 import { getDb, isDatabaseAvailable } from '../services/db';
+import { getUserQualifications } from '../services/qualifications';
 
 const requestSchema = z.object({
   user_id: z.string().min(1),
@@ -490,6 +491,75 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       log.error({ err: error, event: 'users.metadata.error', elapsedMs: elapsedRounded }, 'Unexpected error during user metadata update');
       const appError = new AppError({
         code: 'USER_METADATA_FAILURE',
+        statusCode: 500,
+        message: 'Unexpected server error',
+      });
+      return reply.status(appError.statusCode).send(toErrorResponse(appError));
+    }
+  });
+
+  // GET endpoint for user qualifications across all jobs
+  fastify.get('/v1/users/:userId/qualifications', async (request, reply) => {
+    const log = request.log.child({ route: 'users.qualifications' });
+
+    try {
+      ensureAuthorized(request.headers.authorization, serviceApiKey);
+
+      const { userId } = request.params as { userId: string };
+      if (!userId || typeof userId !== 'string') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'User ID is required',
+        });
+      }
+
+      const { active_jobs_only, qualifies_only, limit, offset } = request.query as {
+        active_jobs_only?: string;
+        qualifies_only?: string;
+        limit?: string;
+        offset?: string;
+      };
+
+      const userQualOptions: { activeJobsOnly?: boolean; qualifiesOnly?: boolean; limit?: number; offset?: number } = {};
+      if (active_jobs_only === 'true') userQualOptions.activeJobsOnly = true;
+      if (qualifies_only === 'true') userQualOptions.qualifiesOnly = true;
+      if (limit) userQualOptions.limit = parseInt(limit, 10);
+      if (offset) userQualOptions.offset = parseInt(offset, 10);
+      const { qualifications, total } = await getUserQualifications(userId, userQualOptions);
+
+      log.info(
+        { event: 'users.qualifications.query', userId, count: qualifications.length, total },
+        'Queried user qualifications'
+      );
+
+      return reply.status(200).send({
+        user_id: userId,
+        count: qualifications.length,
+        total,
+        qualifications: qualifications.map((q) => ({
+          job_id: q.jobId,
+          job_active: q.jobActive,
+          qualifies: q.qualifies,
+          final_score: q.finalScore,
+          domain_score: q.domainScore,
+          task_score: q.taskScore,
+          threshold_used: q.thresholdUsed,
+          filter_reason: q.filterReason,
+          notified_at: q.notifiedAt,
+          notified_via: q.notifiedVia,
+          evaluated_at: q.evaluatedAt,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        log.warn({ error: error.message, code: error.code }, 'Handled user qualifications error');
+        return reply.status(error.statusCode).send(toErrorResponse(error));
+      }
+
+      log.error({ err: error }, 'Unexpected error during user qualifications query');
+      const appError = new AppError({
+        code: 'USER_QUALIFICATIONS_FAILURE',
         statusCode: 500,
         message: 'Unexpected server error',
       });

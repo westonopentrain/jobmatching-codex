@@ -166,7 +166,7 @@ function showDashboard() {
   loginScreen.classList.add('hidden');
   dashboardScreen.classList.remove('hidden');
   loadStats();
-  loadJobs();
+  loadOverview();
 }
 
 // API Calls
@@ -246,14 +246,21 @@ async function deleteMatch(matchId) {
 
 async function loadStats() {
   try {
-    const data = await apiFetch('/admin/stats');
+    const [data, qualData] = await Promise.all([
+      apiFetch('/admin/stats'),
+      apiFetch('/admin/qualifications/summary').catch(() => null),
+    ]);
     document.getElementById('stat-jobs').textContent = data.totals.jobs;
     document.getElementById('stat-users').textContent = data.totals.users;
-    document.getElementById('stat-matches').textContent = data.totals.matchRequests;
     document.getElementById('stat-jobs-24h').textContent = data.last24Hours.jobs;
     document.getElementById('stat-users-24h').textContent = data.last24Hours.users;
-    document.getElementById('stat-recs').textContent = data.totals.recommendations || 0;
     document.getElementById('stat-notifications').textContent = data.totals.notifications || 0;
+
+    // Qualification summary stats
+    if (qualData) {
+      document.getElementById('stat-pending').textContent = qualData.pendingNotifications || 0;
+      document.getElementById('stat-active-jobs').textContent = qualData.activeJobs || 0;
+    }
   } catch (err) {
     console.error('Failed to load stats:', err);
   }
@@ -1964,12 +1971,16 @@ function switchTab(tabName) {
   document.getElementById(`${tabName}-tab`).classList.remove('hidden');
 
   // Load data for the tab
-  if (tabName === 'jobs') loadJobs();
+  if (tabName === 'overview') loadOverview();
+  else if (tabName === 'jobs') loadJobs();
   else if (tabName === 'users') loadUsers();
-  else if (tabName === 'matches') loadMatches();
-  else if (tabName === 'recommendations') loadRecommendations();
+  else if (tabName === 'pending') loadPendingNotifications();
   else if (tabName === 'notifications') loadNotifications();
   else if (tabName === 'sync') loadSyncHealth();
+  else if (tabName === 'debug') {
+    loadMatches();
+    loadRecommendations();
+  }
 }
 
 // Load sync health data
@@ -2117,6 +2128,200 @@ async function loadSyncHealth() {
   } catch (err) {
     loading.textContent = 'Error loading sync health';
     console.error('Failed to load sync health:', err);
+  }
+}
+
+// Load Overview tab data
+async function loadOverview() {
+  const loading = document.getElementById('overview-loading');
+  const tbody = document.querySelector('#active-jobs-table tbody');
+
+  loading.classList.remove('hidden');
+  tbody.innerHTML = '';
+
+  try {
+    const [summary, activeJobs] = await Promise.all([
+      apiFetch('/admin/qualifications/summary'),
+      apiFetch('/admin/jobs/active'),
+    ]);
+
+    loading.classList.add('hidden');
+
+    // Update overview stats
+    document.getElementById('overview-active-jobs').textContent = summary.activeJobs || 0;
+    document.getElementById('overview-pending').textContent = summary.pendingNotifications || 0;
+    document.getElementById('overview-qualified').textContent = summary.totalQualifications || 0;
+    document.getElementById('overview-notified-today').textContent = summary.notifiedToday || 0;
+
+    // Populate active jobs table
+    if (activeJobs.jobs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No active jobs</td></tr>';
+      return;
+    }
+
+    // Fetch qualification counts for each active job
+    const jobsWithCounts = await Promise.all(
+      activeJobs.jobs.slice(0, 20).map(async (job) => {
+        try {
+          const quals = await apiFetch(`/admin/jobs/${encodeURIComponent(job.job_id)}/qualifications?qualifies_only=true&limit=1`);
+          const pending = await apiFetch(`/v1/jobs/${encodeURIComponent(job.job_id)}/pending-notifications?limit=1`);
+          return {
+            ...job,
+            qualified: quals.total || 0,
+            pending: pending.total || 0,
+            notified: (quals.total || 0) - (pending.total || 0),
+          };
+        } catch {
+          return { ...job, qualified: 0, pending: 0, notified: 0 };
+        }
+      })
+    );
+
+    jobsWithCounts.forEach(job => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(job.title || 'Untitled')}</td>
+        <td><code>${escapeHtml(truncate(job.job_id, 20))}</code></td>
+        <td>${job.qualified}</td>
+        <td class="${job.pending > 0 ? 'pending-highlight' : ''}">${job.pending}</td>
+        <td>${job.notified}</td>
+      `;
+      tr.addEventListener('click', () => showJobQualifications(job.job_id));
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    loading.textContent = 'Error loading overview';
+    console.error('Failed to load overview:', err);
+  }
+}
+
+// Load pending notifications
+async function loadPendingNotifications() {
+  const loading = document.getElementById('pending-loading');
+  const tbody = document.querySelector('#pending-table tbody');
+
+  loading.classList.remove('hidden');
+  tbody.innerHTML = '';
+
+  try {
+    const data = await apiFetch('/admin/pending-notifications?limit=100');
+
+    loading.classList.add('hidden');
+
+    if (data.pending.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;">No pending notifications</td></tr>';
+      return;
+    }
+
+    data.pending.forEach(p => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>
+          <div style="font-weight:500;">${escapeHtml(p.job_title || 'Untitled')}</div>
+          <div style="font-size:11px;color:#666;"><code>${escapeHtml(truncate(p.job_id, 24))}</code></div>
+        </td>
+        <td><code>${escapeHtml(truncate(p.user_id, 20))}</code></td>
+        <td>${p.final_score ? (p.final_score * 100).toFixed(0) + '%' : '-'}</td>
+        <td>${p.threshold_used ? (p.threshold_used * 100).toFixed(0) + '%' : '-'}</td>
+        <td>${formatDate(p.evaluated_at)}</td>
+        <td>
+          <button class="btn-small" onclick="markUserNotified('${escapeHtml(p.job_id)}', '${escapeHtml(p.user_id)}')">Mark Notified</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    loading.textContent = 'Error loading pending notifications';
+    console.error('Failed to load pending notifications:', err);
+  }
+}
+
+// Mark a single user as notified
+async function markUserNotified(jobId, userId) {
+  try {
+    await fetch(`/v1/jobs/${encodeURIComponent(jobId)}/mark-notified`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ user_ids: [userId], notified_via: 'manual_dashboard' }),
+    });
+    loadPendingNotifications();
+    loadStats();
+  } catch (err) {
+    alert('Failed to mark user as notified');
+    console.error('Failed to mark notified:', err);
+  }
+}
+
+// Show job qualifications modal
+async function showJobQualifications(jobId) {
+  modalBody.innerHTML = '<div class="loading">Loading...</div>';
+  modal.classList.remove('hidden');
+
+  try {
+    const data = await apiFetch(`/admin/jobs/${encodeURIComponent(jobId)}/qualifications?limit=50`);
+
+    let html = `
+      <div class="detail-header">
+        <h2>${escapeHtml(data.job?.title || 'Untitled Job')}</h2>
+        <div class="meta">
+          Job ID: <code>${escapeHtml(jobId)}</code> |
+          Status: <span class="badge badge-${data.job?.is_active ? 'success' : 'warning'}">${data.job?.is_active ? 'Active' : 'Inactive'}</span>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h3>Qualification Summary</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="label">Total Qualified</span>
+            <span class="value">${data.total}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h3>Qualified Users (Top ${data.qualifications.length})</h3>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Score</th>
+              <th>Domain / Task</th>
+              <th>Notified</th>
+              <th>Filter</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    data.qualifications.forEach(q => {
+      const notifiedStatus = q.notified_at
+        ? `<span class="badge badge-success">Yes</span> <small>${formatDate(q.notified_at)}</small>`
+        : '<span class="badge badge-warning">Pending</span>';
+
+      html += `
+        <tr>
+          <td>
+            <div><code>${escapeHtml(truncate(q.user_id, 20))}</code></div>
+            ${q.user_info ? `<div style="font-size:11px;color:#666;">${escapeHtml(q.user_info.expertise_tier || '')} | ${escapeHtml(q.user_info.country || '')}</div>` : ''}
+          </td>
+          <td><strong>${q.final_score ? (q.final_score * 100).toFixed(0) + '%' : '-'}</strong></td>
+          <td>${q.domain_score ? (q.domain_score * 100).toFixed(0) + '%' : '-'} / ${q.task_score ? (q.task_score * 100).toFixed(0) + '%' : '-'}</td>
+          <td>${notifiedStatus}</td>
+          <td><small>${escapeHtml(q.filter_reason || '-')}</small></td>
+        </tr>
+      `;
+    });
+
+    html += '</tbody></table></div>';
+
+    modalBody.innerHTML = html;
+  } catch (err) {
+    modalBody.innerHTML = '<p class="error">Error loading qualifications</p>';
+    console.error('Failed to load qualifications:', err);
   }
 }
 

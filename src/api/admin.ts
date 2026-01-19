@@ -7,6 +7,7 @@ import { getDb, isDatabaseAvailable } from '../services/db';
 import { logger } from '../utils/logger';
 import { ensureAuthorized } from '../utils/auth';
 import { requireEnv } from '../utils/env';
+import { getQualificationSummary, getAllPendingNotifications, getActiveJobs } from '../services/qualifications';
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const serviceApiKey = requireEnv('SERVICE_API_KEY');
@@ -942,6 +943,158 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
       avgLatencyMs: avgLatencies,
       recentSyncs,
+    };
+  });
+
+  // Get qualification summary for dashboard overview
+  fastify.get('/admin/qualifications/summary', async () => {
+    const summary = await getQualificationSummary();
+
+    logger.info(
+      { event: 'admin.qualifications.summary', ...summary },
+      'Admin queried qualification summary'
+    );
+
+    return summary;
+  });
+
+  // Get all pending notifications across all active jobs
+  fastify.get('/admin/pending-notifications', async (request) => {
+    const { limit = '100', offset = '0' } = request.query as { limit?: string; offset?: string };
+
+    const { pending, total } = await getAllPendingNotifications({
+      limit: parseInt(limit, 10),
+      offset: parseInt(offset, 10),
+    });
+
+    logger.info(
+      { event: 'admin.pending_notifications.query', count: pending.length, total },
+      'Admin queried pending notifications'
+    );
+
+    return {
+      count: pending.length,
+      total,
+      pending: pending.map((p) => ({
+        job_id: p.jobId,
+        job_title: p.jobTitle,
+        user_id: p.userId,
+        final_score: p.finalScore,
+        domain_score: p.domainScore,
+        task_score: p.taskScore,
+        threshold_used: p.thresholdUsed,
+        evaluated_at: p.evaluatedAt,
+      })),
+    };
+  });
+
+  // Get list of active jobs
+  fastify.get('/admin/jobs/active', async () => {
+    const jobs = await getActiveJobs();
+
+    logger.info(
+      { event: 'admin.active_jobs.query', count: jobs.length },
+      'Admin queried active jobs'
+    );
+
+    return {
+      count: jobs.length,
+      jobs: jobs.map((j) => ({
+        job_id: j.id,
+        title: j.title,
+      })),
+    };
+  });
+
+  // Get job qualifications with user info for dashboard
+  fastify.get('/admin/jobs/:jobId/qualifications', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { jobId } = request.params as { jobId: string };
+    const { qualifies_only, limit = '100', offset = '0' } = request.query as {
+      qualifies_only?: string;
+      limit?: string;
+      offset?: string;
+    };
+
+    // Get job info
+    const job = await db.job.findUnique({
+      where: { id: jobId },
+    });
+
+    // Get qualifications
+    const where = {
+      jobId,
+      ...(qualifies_only === 'true' ? { qualifies: true } : {}),
+    };
+
+    const [qualifications, total] = await Promise.all([
+      db.jobUserQualification.findMany({
+        where,
+        orderBy: [{ finalScore: 'desc' }],
+        take: parseInt(limit, 10),
+        skip: parseInt(offset, 10),
+      }),
+      db.jobUserQualification.count({ where }),
+    ]);
+
+    // Get user info for enrichment
+    const userIds = qualifications.map((q) => q.userId);
+    const userInfos = await db.auditUserUpsert.findMany({
+      where: { userId: { in: userIds } },
+      distinct: ['userId'],
+      orderBy: { createdAt: 'desc' },
+      select: {
+        userId: true,
+        domainCapsule: true,
+        expertiseTier: true,
+        country: true,
+        languages: true,
+        subjectMatterCodes: true,
+      },
+    });
+
+    const userMap = new Map(userInfos.map((u) => [u.userId, u]));
+
+    // Enrich qualifications with user info
+    const enrichedQualifications = qualifications.map((q) => ({
+      ...q,
+      userInfo: userMap.get(q.userId) || null,
+    }));
+
+    logger.info(
+      { event: 'admin.job_qualifications.query', jobId, count: qualifications.length, total },
+      'Admin queried job qualifications'
+    );
+
+    return {
+      job: job ? {
+        job_id: job.id,
+        is_active: job.isActive,
+        title: job.title,
+      } : null,
+      count: qualifications.length,
+      total,
+      qualifications: enrichedQualifications.map((q) => ({
+        user_id: q.userId,
+        qualifies: q.qualifies,
+        final_score: q.finalScore,
+        domain_score: q.domainScore,
+        task_score: q.taskScore,
+        threshold_used: q.thresholdUsed,
+        filter_reason: q.filterReason,
+        notified_at: q.notifiedAt,
+        notified_via: q.notifiedVia,
+        evaluated_at: q.evaluatedAt,
+        user_info: q.userInfo ? {
+          domain_capsule: q.userInfo.domainCapsule,
+          expertise_tier: q.userInfo.expertiseTier,
+          country: q.userInfo.country,
+          languages: q.userInfo.languages,
+          subject_matter_codes: q.userInfo.subjectMatterCodes,
+        } : null,
+      })),
     };
   });
 };
