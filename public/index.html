@@ -65,6 +65,7 @@
       <button class="tab" data-tab="pending">Pending</button>
       <button class="tab" data-tab="notifications">History</button>
       <button class="tab" data-tab="sync">Sync</button>
+      <button class="tab" data-tab="monitoring">Monitoring</button>
       <button class="tab tab-debug" data-tab="debug">Debug</button>
     </nav>
 
@@ -226,6 +227,50 @@
           </div>
         </div>
         <div class="loading" id="sync-loading">Loading...</div>
+      </div>
+
+      <!-- Monitoring Tab -->
+      <div id="monitoring-tab" class="tab-pane hidden">
+        <div class="monitoring-container">
+          <div class="monitoring-section">
+            <h3>Re-Notify Events</h3>
+            <p class="section-description">Job edits triggering newly qualified notifications</p>
+            <table id="re-notify-table">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Total Qualified</th>
+                  <th>Previously Notified</th>
+                  <th>Newly Qualified</th>
+                  <th>Latency</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="pagination" id="re-notify-pagination"></div>
+          </div>
+          <div class="monitoring-section">
+            <h3>Recommended Jobs Calls</h3>
+            <p class="section-description">User recommended jobs queries from Bubble</p>
+            <table id="recommended-jobs-table">
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Tier</th>
+                  <th>Jobs</th>
+                  <th>Skip (Country)</th>
+                  <th>Skip (Language)</th>
+                  <th>Latency</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="pagination" id="recommended-jobs-pagination"></div>
+          </div>
+        </div>
+        <div class="loading" id="monitoring-loading">Loading...</div>
       </div>
 
       <!-- Debug Tab (Matches + Recommendations) -->

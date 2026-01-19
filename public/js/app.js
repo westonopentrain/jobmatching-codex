@@ -1977,6 +1977,7 @@ function switchTab(tabName) {
   else if (tabName === 'pending') loadPendingNotifications();
   else if (tabName === 'notifications') loadNotifications();
   else if (tabName === 'sync') loadSyncHealth();
+  else if (tabName === 'monitoring') loadMonitoring();
   else if (tabName === 'debug') {
     loadMatches();
     loadRecommendations();
@@ -2372,4 +2373,164 @@ function formatDate(dateStr) {
 
   // Otherwise show date
   return date.toLocaleDateString();
+}
+
+// Monitoring state
+let monitoringRefreshInterval = null;
+let monitoringReNotifyPage = 1;
+let monitoringRecJobsPage = 1;
+
+// Load monitoring tab data
+async function loadMonitoring() {
+  const loading = document.getElementById('monitoring-loading');
+  loading.classList.remove('hidden');
+
+  try {
+    await Promise.all([
+      loadReNotifyEvents(monitoringReNotifyPage),
+      loadRecommendedJobsLog(monitoringRecJobsPage),
+    ]);
+    loading.classList.add('hidden');
+
+    // Set up auto-refresh every 30 seconds
+    if (monitoringRefreshInterval) {
+      clearInterval(monitoringRefreshInterval);
+    }
+    monitoringRefreshInterval = setInterval(() => {
+      const monitoringTab = document.getElementById('monitoring-tab');
+      if (!monitoringTab.classList.contains('hidden')) {
+        loadReNotifyEvents(monitoringReNotifyPage);
+        loadRecommendedJobsLog(monitoringRecJobsPage);
+      }
+    }, 30000);
+  } catch (err) {
+    loading.textContent = 'Error loading monitoring data';
+    console.error('Failed to load monitoring data:', err);
+  }
+}
+
+// Load re-notify events
+async function loadReNotifyEvents(page = 1) {
+  const tbody = document.querySelector('#re-notify-table tbody');
+  const pagination = document.getElementById('re-notify-pagination');
+
+  try {
+    const data = await apiFetch(`/admin/re-notify?page=${page}&limit=50`);
+    monitoringReNotifyPage = page;
+
+    tbody.innerHTML = '';
+
+    if (data.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;">No re-notify events yet</td></tr>';
+      pagination.innerHTML = '';
+      return;
+    }
+
+    data.records.forEach(r => {
+      const tr = document.createElement('tr');
+      const hasNewlyQualified = r.newly_qualified > 0;
+      if (hasNewlyQualified) {
+        tr.classList.add('highlight-row');
+      }
+
+      const jobDisplay = r.job_title || truncate(r.job_id, 20);
+
+      tr.innerHTML = `
+        <td>
+          <div style="font-weight:500;">${escapeHtml(jobDisplay)}</div>
+          <div style="font-size:11px;color:#666;"><code>${escapeHtml(truncate(r.job_id, 24))}</code></div>
+        </td>
+        <td>${r.total_qualified}</td>
+        <td>${r.previously_notified}</td>
+        <td class="${hasNewlyQualified ? 'highlight-value' : ''}">${r.newly_qualified}</td>
+        <td>${r.elapsed_ms ? Math.round(r.elapsed_ms) + 'ms' : '-'}</td>
+        <td>${formatDate(r.created_at)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Render pagination
+    renderPagination(pagination, data.page, data.totalPages, (newPage) => {
+      loadReNotifyEvents(newPage);
+    });
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#c00;">Error loading re-notify events</td></tr>';
+    console.error('Failed to load re-notify events:', err);
+  }
+}
+
+// Load recommended-jobs log
+async function loadRecommendedJobsLog(page = 1) {
+  const tbody = document.querySelector('#recommended-jobs-table tbody');
+  const pagination = document.getElementById('recommended-jobs-pagination');
+
+  try {
+    const data = await apiFetch(`/admin/recommended-jobs-log?page=${page}&limit=50`);
+    monitoringRecJobsPage = page;
+
+    tbody.innerHTML = '';
+
+    if (data.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#666;">No recommended-jobs calls yet</td></tr>';
+      pagination.innerHTML = '';
+      return;
+    }
+
+    data.records.forEach(r => {
+      const tr = document.createElement('tr');
+
+      tr.innerHTML = `
+        <td><code>${escapeHtml(truncate(r.user_id, 20))}</code></td>
+        <td><span class="badge badge-${r.expertise_tier || 'entry'}">${r.expertise_tier || 'entry'}</span></td>
+        <td>${r.recommended_count}</td>
+        <td>${r.skipped_by_country}</td>
+        <td>${r.skipped_by_language}</td>
+        <td>${r.elapsed_ms ? Math.round(r.elapsed_ms) + 'ms' : '-'}</td>
+        <td>${formatDate(r.created_at)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Render pagination
+    renderPagination(pagination, data.page, data.totalPages, (newPage) => {
+      loadRecommendedJobsLog(newPage);
+    });
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#c00;">Error loading recommended-jobs log</td></tr>';
+    console.error('Failed to load recommended-jobs log:', err);
+  }
+}
+
+// Render pagination controls
+function renderPagination(container, currentPage, totalPages, onPageChange) {
+  if (totalPages <= 1) {
+    container.innerHTML = '';
+    return;
+  }
+
+  let html = '<div class="pagination-controls">';
+
+  // Previous button
+  if (currentPage > 1) {
+    html += `<button class="pagination-btn" data-page="${currentPage - 1}">← Prev</button>`;
+  }
+
+  // Page info
+  html += `<span class="pagination-info">Page ${currentPage} of ${totalPages}</span>`;
+
+  // Next button
+  if (currentPage < totalPages) {
+    html += `<button class="pagination-btn" data-page="${currentPage + 1}">Next →</button>`;
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+
+  // Add click handlers
+  container.querySelectorAll('.pagination-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const page = parseInt(btn.dataset.page, 10);
+      onPageChange(page);
+    });
+  });
 }

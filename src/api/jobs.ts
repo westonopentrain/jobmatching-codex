@@ -11,7 +11,7 @@ import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
 import { classifyJob, getWeightProfile, JobClass } from '../services/job-classifier';
-import { auditJobUpsert, auditJobNotify, auditJobMetadataUpdate } from '../services/audit';
+import { auditJobUpsert, auditJobNotify, auditJobMetadataUpdate, auditReNotify } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
 import { logger } from '../utils/logger';
 import {
@@ -1581,6 +1581,16 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'Re-notify processing complete'
       );
+
+      // Audit logging (non-blocking)
+      auditReNotify({
+        jobId,
+        requestId,
+        totalQualified,
+        previouslyNotified,
+        newlyQualified: newlyQualifiedUserIds.length,
+        elapsedMs: Math.round(elapsedMs),
+      });
 
       return reply.status(200).send({
         status: 'ok',

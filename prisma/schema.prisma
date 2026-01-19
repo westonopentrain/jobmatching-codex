@@ -387,3 +387,52 @@ model JobUserQualification {
   @@index([jobActive, qualifies])
   @@map("job_user_qualifications")
 }
+
+// Re-notify audit trail (job edits triggering newly qualified notifications)
+model AuditReNotify {
+  id              Int      @id @default(autoincrement())
+  jobId           String   @map("job_id")
+  requestId       String?  @map("request_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Counts
+  totalQualified      Int @map("total_qualified")
+  previouslyNotified  Int @map("previously_notified")
+  newlyQualified      Int @map("newly_qualified")
+
+  // Performance
+  elapsedMs       Float?   @map("elapsed_ms")
+
+  @@map("audit_re_notify")
+  @@index([jobId])
+  @@index([createdAt])
+}
+
+// Recommended jobs audit trail (user recommended jobs queries)
+model AuditRecommendedJobs {
+  id              Int      @id @default(autoincrement())
+  userId          String   @map("user_id")
+  requestId       String?  @map("request_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // User context
+  expertiseTier   String?  @map("expertise_tier")
+  country         String?
+  languages       String[]
+
+  // Counts
+  activeJobs        Int   @map("active_jobs")
+  scoredJobs        Int   @map("scored_jobs")
+  recommendedCount  Int   @map("recommended_count")
+
+  // Filtering stats
+  skippedByCountry  Int   @map("skipped_by_country")
+  skippedByLanguage Int   @map("skipped_by_language")
+
+  // Performance
+  elapsedMs       Float?   @map("elapsed_ms")
+
+  @@map("audit_recommended_jobs")
+  @@index([userId])
+  @@index([createdAt])
+}
