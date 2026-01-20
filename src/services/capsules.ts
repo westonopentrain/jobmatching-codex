@@ -25,13 +25,19 @@ Your output must be SEMANTICALLY SIMILAR to what job postings say when seeking t
 
 ## DOMAIN CAPSULE (WHO is this person? 5-20 words)
 
+This represents their PROFESSIONAL IDENTITY - who they are in their career.
+Think: What would they put as their job title on LinkedIn?
+
+PRIORITY: Base this on WORK EXPERIENCE and EDUCATION, NOT labeling experience.
+A marketing professional who does data labeling = "Marketing specialist", NOT "Data annotator".
+
 Ask yourself these questions IN ORDER. Stop at the FIRST YES:
 
-1. Does this person have a LICENSED/CREDENTIALED PROFESSION (doctor, lawyer, accountant, nurse, pharmacist)?
+1. Does this person have a LICENSED/CREDENTIALED PROFESSION (doctor, lawyer, accountant, nurse, pharmacist, engineer with PE)?
    → Output: "[Profession title]. [Specialty/domain]."
    → Example: "OBGYN physician. Obstetrics and gynecology medical expertise."
 
-2. Is this person's PRIMARY PROFESSION language-related (translator, interpreter, localization specialist, language teacher)?
+2. Is this person's PRIMARY PROFESSION language-related (translator, interpreter, localization specialist)?
    → Only match if their MAIN JOB is translation, interpretation, or language services
    → Do NOT match: software engineers, data scientists, etc. who happen to speak a language natively
    → Output: "[Language] translator/interpreter. [Language services expertise]."
@@ -51,7 +57,35 @@ Ask yourself these questions IN ORDER. Stop at the FIRST YES:
    → Output: "[Specific role]. [Domain/tools]."
    → Example: "Data scientist. Machine learning, Python, statistical modeling."
 
-5. If NO to all above:
+5. If none of the above apply, examine their WORK EXPERIENCE and EDUCATION to identify their professional identity:
+
+   Think through: What is this person's PRIMARY profession based on their career history?
+   - Look at job titles, industries, and skills from their work history
+   - Consider their education and any specialized training
+   - Identify what makes them unique professionally
+
+   Output: "[Their profession/expertise]. [Key skills or domain]."
+
+   Examples of the VARIETY of professions you might identify:
+   - "Marketing specialist. Digital marketing, social media campaigns, SEO."
+   - "Artist. Illustration, digital art, concept design."
+   - "Poet and creative writer. Poetry, literary fiction, creative workshops."
+   - "Opera singer. Classical vocal performance, music education."
+   - "Medical assistant. Patient intake, clinical support, EKG procedures."
+   - "Customer service professional. Call center, CRM, client relations."
+   - "Retail manager. Store operations, inventory, team leadership."
+   - "Chef. Culinary arts, menu development, kitchen management."
+   - "Photographer. Portrait photography, event coverage, photo editing."
+   - "Life coach. Personal development, career counseling."
+   - "Teacher. K-12 education, curriculum development, classroom instruction."
+   - "Accountant. Bookkeeping, tax preparation, financial reporting."
+
+   IMPORTANT:
+   - Every person has SOMETHING that defines their professional identity
+   - Do NOT default to labeling/annotation unless that's genuinely their ONLY work experience
+   - Labeling/AI Experience is for the SKILLS CAPSULE, not domain
+
+6. ONLY if there is genuinely NO work experience, education, or professional background whatsoever:
    → Output: "General workforce. No specialized expertise documented."
 
 RULES:
