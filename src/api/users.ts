@@ -10,7 +10,7 @@ import { classifyUser } from '../services/user-classifier';
 import { embedText, EMBEDDING_DIMENSION, EMBEDDING_MODEL } from '../services/embeddings';
 import { upsertVector, deleteVectors, updateVectorMetadata, VectorMetadata, fetchVectors, queryByVector } from '../services/pinecone';
 import { requireEnv, getEnv } from '../utils/env';
-import { auditUserUpsert, auditUserMetadataUpdate, auditRecommendedJobs } from '../services/audit';
+import { auditUserUpsert, auditUserMetadataUpdate, auditRecommendedJobs, auditUpsertFailure } from '../services/audit';
 import { getDb, isDatabaseAvailable } from '../services/db';
 import { getUserQualifications, getActiveJobs, storeUserQualificationsForJobs } from '../services/qualifications';
 import { getWeightProfile, JobClass } from '../services/job-classifier';
@@ -469,15 +469,48 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
     } catch (error) {
       const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
       const elapsedRounded = Number(elapsedMs.toFixed(2));
+
+      // Extract user ID and raw input for failure logging
+      const bodyWithAliases = applyAliases(request.body);
+      const parsed = requestSchema.safeParse(bodyWithAliases);
+      const userId = parsed.success ? parsed.data.user_id : (bodyWithAliases as Record<string, unknown>)?.user_id as string | undefined;
+
       if (error instanceof AppError) {
         log.warn(
           { error: error.message, code: error.code, details: error.details, event: 'upsert.error', elapsedMs: elapsedRounded },
           'Handled application error during upsert'
         );
+
+        // Log failure to audit (non-blocking)
+        if (userId) {
+          auditUpsertFailure({
+            entityType: 'user',
+            entityId: userId,
+            requestId,
+            errorCode: error.code,
+            errorMessage: error.message,
+            rawInput: bodyWithAliases as Record<string, unknown>,
+          });
+        }
+
         return reply.status(error.statusCode).send(toErrorResponse(error));
       }
 
       log.error({ err: error, event: 'upsert.error', elapsedMs: elapsedRounded }, 'Unexpected error during upsert');
+
+      // Log failure to audit (non-blocking)
+      if (userId) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        auditUpsertFailure({
+          entityType: 'user',
+          entityId: userId,
+          requestId,
+          errorCode: 'UPSERT_FAILURE',
+          errorMessage,
+          rawInput: bodyWithAliases as Record<string, unknown>,
+        });
+      }
+
       const appError = new AppError({
         code: 'UPSERT_FAILURE',
         statusCode: 500,

@@ -436,3 +436,20 @@ model AuditRecommendedJobs {
   @@index([userId])
   @@index([createdAt])
 }
+
+// Upsert failure tracking for reliability monitoring
+// Records failed upserts for users and jobs so they can be retried
+model AuditUpsertFailure {
+  id           Int      @id @default(autoincrement())
+  entityType   String   @map("entity_type")  // 'user' or 'job'
+  entityId     String   @map("entity_id")
+  requestId    String?  @map("request_id")
+  errorCode    String   @map("error_code")
+  errorMessage String   @map("error_message")
+  rawInput     Json?    @map("raw_input")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("audit_upsert_failures")
+  @@index([entityType, createdAt])
+  @@index([entityId])
+}

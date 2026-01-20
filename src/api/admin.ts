@@ -353,7 +353,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
     if (!db) return { error: 'Database not available' };
 
-    const [jobCount, userCount, matchCount, resultCount, recCount, recResultCount, notifyCount, notifyResultCount] = await Promise.all([
+    const [jobCount, userCount, matchCount, resultCount, recCount, recResultCount, notifyCount, notifyResultCount, failureCount] = await Promise.all([
       db.auditJobUpsert.count(),
       db.auditUserUpsert.count(),
       db.auditMatchRequest.count(),
@@ -362,16 +362,18 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       db.auditUserMatchResult.count(),
       db.auditJobNotify.count(),
       db.auditJobNotifyResult.count(),
+      db.auditUpsertFailure.count(),
     ]);
 
     // Get counts from last 24 hours
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const [jobsLast24h, usersLast24h, matchesLast24h, recsLast24h, notifyLast24h] = await Promise.all([
+    const [jobsLast24h, usersLast24h, matchesLast24h, recsLast24h, notifyLast24h, failuresLast24h] = await Promise.all([
       db.auditJobUpsert.count({ where: { createdAt: { gte: since } } }),
       db.auditUserUpsert.count({ where: { createdAt: { gte: since } } }),
       db.auditMatchRequest.count({ where: { createdAt: { gte: since } } }),
       db.auditUserMatchRequest.count({ where: { createdAt: { gte: since } } }),
       db.auditJobNotify.count({ where: { createdAt: { gte: since } } }),
+      db.auditUpsertFailure.count({ where: { createdAt: { gte: since } } }),
     ]);
 
     return {
@@ -384,6 +386,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         recommendationResults: recResultCount,
         notifications: notifyCount,
         notificationResults: notifyResultCount,
+        upsertFailures: failureCount,
       },
       last24Hours: {
         jobs: jobsLast24h,
@@ -391,6 +394,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         matchRequests: matchesLast24h,
         recommendations: recsLast24h,
         notifications: notifyLast24h,
+        upsertFailures: failuresLast24h,
       },
     };
   });
@@ -1260,6 +1264,167 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         skipped_by_country: r.skippedByCountry,
         skipped_by_language: r.skippedByLanguage,
         elapsed_ms: r.elapsedMs,
+      })),
+    };
+  });
+
+  // Get upsert failures (paginated) - for reliability monitoring
+  fastify.get('/admin/upsert-failures', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { page = '1', limit = '50', entity_type } = request.query as {
+      page?: string;
+      limit?: string;
+      entity_type?: string;
+    };
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+    const skip = (pageNum - 1) * limitNum;
+
+    const where = entity_type ? { entityType: entity_type } : {};
+
+    const [records, total] = await Promise.all([
+      db.auditUpsertFailure.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum,
+      }),
+      db.auditUpsertFailure.count({ where }),
+    ]);
+
+    logger.info(
+      { event: 'admin.upsert_failures.query', count: records.length, total, page: pageNum, entityType: entity_type },
+      'Admin queried upsert failures'
+    );
+
+    return {
+      count: records.length,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+      records: records.map((r) => ({
+        id: r.id,
+        entity_type: r.entityType,
+        entity_id: r.entityId,
+        request_id: r.requestId,
+        error_code: r.errorCode,
+        error_message: r.errorMessage,
+        raw_input: r.rawInput,
+        created_at: r.createdAt,
+      })),
+    };
+  });
+
+  // Get single upsert failure detail
+  fastify.get('/admin/upsert-failures/:failureId', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { failureId } = request.params as { failureId: string };
+    const id = parseInt(failureId, 10);
+    if (isNaN(id)) {
+      return { error: 'Invalid failure ID' };
+    }
+
+    const failure = await db.auditUpsertFailure.findUnique({
+      where: { id },
+    });
+
+    if (!failure) {
+      return { error: 'Failure not found' };
+    }
+
+    logger.info(
+      { event: 'admin.upsert_failure.detail', failureId: id },
+      'Admin queried upsert failure detail'
+    );
+
+    return {
+      id: failure.id,
+      entity_type: failure.entityType,
+      entity_id: failure.entityId,
+      request_id: failure.requestId,
+      error_code: failure.errorCode,
+      error_message: failure.errorMessage,
+      raw_input: failure.rawInput,
+      created_at: failure.createdAt,
+    };
+  });
+
+  // Delete upsert failure (after retrying)
+  fastify.delete('/admin/upsert-failures/:failureId', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { failureId } = request.params as { failureId: string };
+    const id = parseInt(failureId, 10);
+
+    if (isNaN(id)) {
+      return { error: 'Invalid failure ID' };
+    }
+
+    const deleted = await db.auditUpsertFailure.delete({
+      where: { id },
+    }).catch(() => null);
+
+    if (!deleted) {
+      return { error: 'Failure not found' };
+    }
+
+    logger.info(
+      { event: 'admin.upsert_failure.delete', failureId: id },
+      'Admin deleted upsert failure'
+    );
+
+    return {
+      status: 'ok',
+      deleted: {
+        id,
+      },
+    };
+  });
+
+  // Get upsert failures summary for stats
+  fastify.get('/admin/upsert-failures/summary', async () => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [totalFailures, userFailures, jobFailures, failures24h] = await Promise.all([
+      db.auditUpsertFailure.count(),
+      db.auditUpsertFailure.count({ where: { entityType: 'user' } }),
+      db.auditUpsertFailure.count({ where: { entityType: 'job' } }),
+      db.auditUpsertFailure.count({ where: { createdAt: { gte: since24h } } }),
+    ]);
+
+    // Get recent error codes
+    const recentByErrorCode = await db.auditUpsertFailure.groupBy({
+      by: ['errorCode'],
+      where: { createdAt: { gte: since24h } },
+      _count: { id: true },
+      orderBy: { _count: { id: 'desc' } },
+      take: 10,
+    });
+
+    logger.info(
+      { event: 'admin.upsert_failures.summary', totalFailures, failures24h },
+      'Admin queried upsert failures summary'
+    );
+
+    return {
+      total: totalFailures,
+      by_entity_type: {
+        user: userFailures,
+        job: jobFailures,
+      },
+      last_24h: failures24h,
+      recent_error_codes: recentByErrorCode.map((r) => ({
+        error_code: r.errorCode,
+        count: r._count.id,
       })),
     };
   });
