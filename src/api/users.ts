@@ -800,10 +800,19 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       const userTaskVector = userVectors[userTaskVectorId]?.values;
 
       if (!userDomainVector || !userTaskVector || userDomainVector.length === 0 || userTaskVector.length === 0) {
-        throw new AppError({
-          code: 'USER_VECTORS_MISSING',
-          statusCode: 404,
-          message: 'User vectors not found; upsert user first via /v1/users/upsert.',
+        // Vectors not indexed yet (Pinecone eventual consistency) - return empty results
+        // This can happen when recommended-jobs is called immediately after upsert
+        log.warn(
+          { event: 'users.recommended_jobs.vectors_not_ready', userId },
+          'User vectors not yet indexed in Pinecone - returning empty recommendations'
+        );
+        return reply.status(200).send({
+          user_id: userId,
+          user_expertise_tier: undefined,
+          count: 0,
+          job_ids: [],
+          jobs: [],
+          vectors_pending: true,
         });
       }
 
