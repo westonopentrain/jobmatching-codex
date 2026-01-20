@@ -38,14 +38,9 @@ const BLOCKLIST_TERMS = [
 ];
 
 const DOMAIN_BANNED_TERMS = [
-  'instructor',
-  'teacher',
-  'manager',
-  'director',
-  'writer',
+  // Verbs describing actions (should be banned - not professional identity)
   'worked',
   'served',
-  'role',
   'responsible',
   'taught',
   'organized',
@@ -53,10 +48,11 @@ const DOMAIN_BANNED_TERMS = [
   'facilitated',
   'supervised',
   'led',
+  // Generic words (should be banned - add noise without identifying expertise)
+  'role',
   'company',
   'corporation',
   'method',
-  'berlitz',
 ];
 
 const DOMAIN_MONTH_REGEX =
