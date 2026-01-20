@@ -697,3 +697,62 @@ export function auditRecommendedJobs(data: RecommendedJobsAuditData): void {
     }
   })();
 }
+
+// Upsert failure audit types
+export interface UpsertFailureAuditData {
+  entityType: 'user' | 'job';
+  entityId: string;
+  requestId?: string | undefined;
+  errorCode: string;
+  errorMessage: string;
+  rawInput?: Record<string, unknown> | undefined;
+}
+
+/**
+ * Log a failed upsert to the audit trail (non-blocking)
+ * This allows tracking of failures for retry and monitoring
+ */
+export function auditUpsertFailure(data: UpsertFailureAuditData): void {
+  if (!isDatabaseAvailable()) {
+    return;
+  }
+
+  // Fire and forget
+  (async () => {
+    try {
+      const db = getDb();
+      if (!db) return;
+
+      await db.auditUpsertFailure.create({
+        data: {
+          entityType: data.entityType,
+          entityId: data.entityId,
+          requestId: data.requestId ?? null,
+          errorCode: data.errorCode,
+          errorMessage: data.errorMessage,
+          ...(data.rawInput ? { rawInput: data.rawInput as Prisma.InputJsonValue } : {}),
+        },
+      });
+
+      logger.info(
+        {
+          event: 'audit.upsert_failure.saved',
+          entityType: data.entityType,
+          entityId: data.entityId,
+          errorCode: data.errorCode,
+        },
+        'Upsert failure audit record saved'
+      );
+    } catch (error) {
+      logger.error(
+        {
+          event: 'audit.upsert_failure.error',
+          entityType: data.entityType,
+          entityId: data.entityId,
+          error,
+        },
+        'Failed to save upsert failure audit record'
+      );
+    }
+  })();
+}

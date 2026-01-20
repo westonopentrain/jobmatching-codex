@@ -255,6 +255,18 @@ async function loadStats() {
     document.getElementById('stat-jobs-24h').textContent = data.last24Hours.jobs;
     document.getElementById('stat-users-24h').textContent = data.last24Hours.users;
     document.getElementById('stat-notifications').textContent = data.totals.notifications || 0;
+    document.getElementById('stat-failures').textContent = data.totals.upsertFailures || 0;
+
+    // Update failures stat styling based on count
+    const failuresValue = data.totals.upsertFailures || 0;
+    const failuresStat = document.querySelector('.stat-failures');
+    if (failuresStat) {
+      if (failuresValue > 0) {
+        failuresStat.classList.add('stat-warning');
+      } else {
+        failuresStat.classList.remove('stat-warning');
+      }
+    }
 
     // Qualification summary stats
     if (qualData) {
@@ -1975,6 +1987,7 @@ function switchTab(tabName) {
   else if (tabName === 'jobs') loadJobs();
   else if (tabName === 'users') loadUsers();
   else if (tabName === 'pending') loadPendingNotifications();
+  else if (tabName === 'failures') loadFailures();
   else if (tabName === 'notifications') loadNotifications();
   else if (tabName === 'sync') loadSyncHealth();
   else if (tabName === 'monitoring') loadMonitoring();
@@ -2534,3 +2547,136 @@ function renderPagination(container, currentPage, totalPages, onPageChange) {
     });
   });
 }
+
+// Failures state
+let failuresPage = 1;
+let failuresEntityType = '';
+
+// Load upsert failures
+async function loadFailures(page = 1) {
+  const loading = document.getElementById('failures-loading');
+  const tbody = document.querySelector('#failures-table tbody');
+  const pagination = document.getElementById('failures-pagination');
+
+  loading.classList.remove('hidden');
+  tbody.innerHTML = '';
+
+  try {
+    let endpoint = `/admin/upsert-failures?page=${page}&limit=50`;
+    if (failuresEntityType) {
+      endpoint += `&entity_type=${failuresEntityType}`;
+    }
+
+    const data = await apiFetch(endpoint);
+    failuresPage = page;
+
+    loading.classList.add('hidden');
+
+    if (data.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;">No failures found</td></tr>';
+      pagination.innerHTML = '';
+      return;
+    }
+
+    data.records.forEach(r => {
+      const tr = document.createElement('tr');
+      const typeClass = r.entity_type === 'user' ? 'badge-entry' : 'badge-specialized';
+      const errorCodeClass = r.error_code.includes('PARSE') ? 'badge-warning' : 'badge-generic';
+
+      tr.innerHTML = `
+        <td><span class="badge ${typeClass}">${r.entity_type}</span></td>
+        <td><code>${escapeHtml(truncate(r.entity_id, 24))}</code></td>
+        <td><span class="badge ${errorCodeClass}">${escapeHtml(r.error_code)}</span></td>
+        <td title="${escapeHtml(r.error_message)}">${escapeHtml(truncate(r.error_message, 40))}</td>
+        <td>${formatDate(r.created_at)}</td>
+        <td>
+          <button class="btn-small" onclick="showFailureDetail(${r.id})">View</button>
+          <button class="btn-small btn-danger" onclick="deleteFailure(${r.id})">Delete</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Render pagination
+    renderPagination(pagination, data.page, data.totalPages, (newPage) => {
+      loadFailures(newPage);
+    });
+  } catch (err) {
+    loading.textContent = 'Error loading failures';
+    console.error('Failed to load failures:', err);
+  }
+}
+
+// Show failure detail in modal
+async function showFailureDetail(failureId) {
+  try {
+    const failure = await apiFetch(`/admin/upsert-failures/${failureId}`);
+
+    let rawInputHtml = '';
+    if (failure.raw_input) {
+      rawInputHtml = `
+        <h4>Raw Input</h4>
+        <pre class="code-block">${escapeHtml(JSON.stringify(failure.raw_input, null, 2))}</pre>
+      `;
+    }
+
+    modalBody.innerHTML = `
+      <h2>Upsert Failure Detail</h2>
+      <div class="detail-section">
+        <h4>Error Information</h4>
+        <table class="detail-table">
+          <tr><th>ID</th><td>${failure.id}</td></tr>
+          <tr><th>Entity Type</th><td><span class="badge ${failure.entity_type === 'user' ? 'badge-entry' : 'badge-specialized'}">${failure.entity_type}</span></td></tr>
+          <tr><th>Entity ID</th><td><code>${escapeHtml(failure.entity_id)}</code></td></tr>
+          <tr><th>Request ID</th><td><code>${escapeHtml(failure.request_id || '-')}</code></td></tr>
+          <tr><th>Error Code</th><td><span class="badge badge-warning">${escapeHtml(failure.error_code)}</span></td></tr>
+          <tr><th>Error Message</th><td>${escapeHtml(failure.error_message)}</td></tr>
+          <tr><th>Time</th><td>${formatDate(failure.created_at)}</td></tr>
+        </table>
+      </div>
+      ${rawInputHtml}
+      <div class="modal-actions">
+        <button class="btn-danger" onclick="deleteFailure(${failure.id}); closeModal();">Delete Failure</button>
+      </div>
+    `;
+    openModal();
+  } catch (err) {
+    console.error('Failed to load failure detail:', err);
+    alert('Failed to load failure detail');
+  }
+}
+
+// Delete a failure record
+async function deleteFailure(failureId) {
+  if (!confirm('Are you sure you want to delete this failure record?')) {
+    return;
+  }
+
+  try {
+    await apiDelete(`/admin/upsert-failures/${failureId}`);
+    loadFailures(failuresPage);
+    loadStats();
+  } catch (err) {
+    alert('Failed to delete failure: ' + err.message);
+    console.error('Failed to delete failure:', err);
+  }
+}
+
+// Initialize failures tab event listeners
+document.addEventListener('DOMContentLoaded', () => {
+  const typeFilter = document.getElementById('failures-type-filter');
+  const refreshBtn = document.getElementById('failures-refresh-btn');
+
+  if (typeFilter) {
+    typeFilter.addEventListener('change', () => {
+      failuresEntityType = typeFilter.value;
+      loadFailures(1);
+    });
+  }
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      loadFailures(failuresPage);
+    });
+  }
+});

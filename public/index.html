@@ -31,6 +31,10 @@
         <span class="stat-value" id="stat-pending">-</span>
         <span class="stat-label">Pending</span>
       </div>
+      <div class="stat stat-failures">
+        <span class="stat-value" id="stat-failures">-</span>
+        <span class="stat-label">Failures</span>
+      </div>
       <div class="stat">
         <span class="stat-value" id="stat-active-jobs">-</span>
         <span class="stat-label">Active Jobs</span>
@@ -63,6 +67,7 @@
       <button class="tab" data-tab="jobs">Jobs</button>
       <button class="tab" data-tab="users">Users</button>
       <button class="tab" data-tab="pending">Pending</button>
+      <button class="tab" data-tab="failures">Failures</button>
       <button class="tab" data-tab="notifications">History</button>
       <button class="tab" data-tab="sync">Sync</button>
       <button class="tab" data-tab="monitoring">Monitoring</button>
@@ -176,6 +181,34 @@
           <tbody></tbody>
         </table>
         <div class="loading" id="pending-loading">Loading...</div>
+      </div>
+
+      <!-- Upsert Failures Tab -->
+      <div id="failures-tab" class="tab-pane hidden">
+        <div class="toolbar">
+          <span class="toolbar-info">Failed upsert attempts that need attention</span>
+          <select id="failures-type-filter">
+            <option value="">All Types</option>
+            <option value="user">Users Only</option>
+            <option value="job">Jobs Only</option>
+          </select>
+          <button id="failures-refresh-btn">Refresh</button>
+        </div>
+        <table id="failures-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Entity ID</th>
+              <th>Error Code</th>
+              <th>Error Message</th>
+              <th>Time</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="pagination" id="failures-pagination"></div>
+        <div class="loading" id="failures-loading">Loading...</div>
       </div>
 
       <!-- Notifications History Tab -->

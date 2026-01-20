@@ -11,7 +11,7 @@ import { getDb, isDatabaseAvailable } from '../services/db';
 import { generateJobCapsules, normalizeJobRequest } from '../services/job-capsules';
 import { JobFields, UpsertJobRequest } from '../utils/types';
 import { classifyJob, getWeightProfile, JobClass } from '../services/job-classifier';
-import { auditJobUpsert, auditJobNotify, auditJobMetadataUpdate, auditReNotify } from '../services/audit';
+import { auditJobUpsert, auditJobNotify, auditJobMetadataUpdate, auditReNotify, auditUpsertFailure } from '../services/audit';
 import { checkJobUpsertAlerts } from '../services/alerts';
 import { logger } from '../utils/logger';
 import {
@@ -269,15 +269,47 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
     } catch (error) {
       const errorElapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
       const errorElapsedRounded = Number(errorElapsedMs.toFixed(2));
+
+      // Extract job ID for failure logging
+      const parsed = jobUpsertSchema.safeParse(request.body);
+      const jobId = parsed.success ? parsed.data.job_id : (request.body as Record<string, unknown>)?.job_id as string | undefined;
+
       if (error instanceof AppError) {
         request.log.warn(
           { error: error.message, code: error.code, details: error.details, event: 'jobs.upsert.error', elapsedMs: errorElapsedRounded },
           'Handled job upsert error'
         );
+
+        // Log failure to audit (non-blocking)
+        if (jobId) {
+          auditUpsertFailure({
+            entityType: 'job',
+            entityId: jobId,
+            requestId,
+            errorCode: error.code,
+            errorMessage: error.message,
+            rawInput: request.body as Record<string, unknown>,
+          });
+        }
+
         return reply.status(error.statusCode).send(toErrorResponse(error));
       }
 
       request.log.error({ err: error, event: 'jobs.upsert.error', elapsedMs: errorElapsedRounded }, 'Unexpected error during job upsert');
+
+      // Log failure to audit (non-blocking)
+      if (jobId) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        auditUpsertFailure({
+          entityType: 'job',
+          entityId: jobId,
+          requestId,
+          errorCode: 'JOB_UPSERT_FAILURE',
+          errorMessage,
+          rawInput: request.body as Record<string, unknown>,
+        });
+      }
+
       const appError = new AppError({
         code: 'JOB_UPSERT_FAILURE',
         statusCode: 500,
