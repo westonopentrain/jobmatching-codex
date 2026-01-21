@@ -1428,4 +1428,81 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       })),
     };
   });
+
+  // ============================================
+  // Resume Parse Failure Endpoints
+  // ============================================
+
+  // POST /admin/resume-parse-failure - Receive failure from resume parsing service
+  fastify.post('/admin/resume-parse-failure', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { userId, fileUrl, error } = request.body as {
+      userId: string;
+      fileUrl?: string;
+      error: string;
+    };
+
+    if (!userId || !error) {
+      return { error: 'userId and error are required' };
+    }
+
+    const failure = await db.resumeParseFailure.create({
+      data: {
+        userId,
+        fileUrl: fileUrl || null,
+        error,
+      },
+    });
+
+    logger.info(
+      { event: 'resume.parse.failure', userId, fileUrl, error },
+      'Resume parse failure recorded'
+    );
+
+    return { status: 'ok', id: failure.id };
+  });
+
+  // GET /admin/resume-parse-failures - List failures (paginated)
+  fastify.get('/admin/resume-parse-failures', async (request) => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const { limit = '50', userId } = request.query as { limit?: string; userId?: string };
+    const take = Math.min(parseInt(limit, 10) || 50, 100);
+
+    const where = userId ? { userId } : {};
+
+    const records = await db.resumeParseFailure.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    logger.info(
+      { event: 'admin.resume-parse-failures.query', count: records.length, userId },
+      'Admin queried resume parse failures'
+    );
+
+    return { count: records.length, records };
+  });
+
+  // GET /admin/resume-parse-stats - Summary stats
+  fastify.get('/admin/resume-parse-stats', async () => {
+    const db = getDb();
+    if (!db) return { error: 'Database not available' };
+
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [total, last24h] = await Promise.all([
+      db.resumeParseFailure.count(),
+      db.resumeParseFailure.count({ where: { createdAt: { gte: since24h } } }),
+    ]);
+
+    return {
+      total,
+      last24Hours: last24h,
+    };
+  });
 };

@@ -68,6 +68,7 @@
       <button class="tab" data-tab="users">Users</button>
       <button class="tab" data-tab="pending">Pending</button>
       <button class="tab" data-tab="failures">Failures</button>
+      <button class="tab" data-tab="resume-parsing">Resume Parsing</button>
       <button class="tab" data-tab="notifications">History</button>
       <button class="tab" data-tab="sync">Sync</button>
       <button class="tab" data-tab="monitoring">Monitoring</button>
@@ -209,6 +210,37 @@
         </table>
         <div class="pagination" id="failures-pagination"></div>
         <div class="loading" id="failures-loading">Loading...</div>
+      </div>
+
+      <!-- Resume Parsing Tab -->
+      <div id="resume-parsing-tab" class="tab-pane hidden">
+        <div class="stats-bar" style="margin-bottom: 16px;">
+          <div class="stat stat-failures">
+            <span class="stat-value" id="stat-parse-total">-</span>
+            <span class="stat-label">Total Failures</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="stat-parse-24h">-</span>
+            <span class="stat-label">Failures (24h)</span>
+          </div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="parse-search" placeholder="Search by User ID...">
+          <button id="parse-search-btn">Search</button>
+          <button id="parse-clear-btn">Clear</button>
+        </div>
+        <table id="parse-failures-table">
+          <thead>
+            <tr>
+              <th>User ID</th>
+              <th>File URL</th>
+              <th>Error</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="loading" id="parse-loading">Loading...</div>
       </div>
 
       <!-- Notifications History Tab -->

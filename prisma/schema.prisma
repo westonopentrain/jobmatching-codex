@@ -453,3 +453,17 @@ model AuditUpsertFailure {
   @@index([entityType, createdAt])
   @@index([entityId])
 }
+
+// Resume parsing failures from external resume parsing service
+// Records when the resume-parsing-service fails to extract text from a file
+model ResumeParseFailure {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")
+  fileUrl   String?  @map("file_url")
+  error     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("resume_parse_failures")
+  @@index([createdAt])
+  @@index([userId])
+}
