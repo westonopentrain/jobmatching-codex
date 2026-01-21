@@ -73,39 +73,48 @@ interface FetchOptions {
   namespace?: string;
 }
 
+// Batch size for fetch requests to avoid 414 URI Too Large errors
+const FETCH_BATCH_SIZE = 100;
+
 export async function fetchVectors(ids: string[], options?: FetchOptions): Promise<Record<string, FetchedVector>> {
   if (ids.length === 0) {
     return {};
   }
 
   const index = getIndex();
-  const fetchArgs = options?.namespace ? { ids, namespace: options.namespace } : ids;
-
-  const response = await withRetry(() =>
-    index.fetch(fetchArgs as Parameters<Index<VectorMetadata>['fetch']>[0])
-  ).catch((error) => {
-    if (error instanceof AppError) {
-      throw error;
-    }
-    throw new AppError({
-      code: 'PINECONE_FETCH_FAILURE',
-      statusCode: 502,
-      message: 'Failed to fetch vectors from Pinecone',
-      details: { message: (error as Error).message, ids },
-    });
-  });
-
-  const records = response.records ?? {};
   const result: Record<string, FetchedVector> = {};
-  for (const [key, record] of Object.entries(records)) {
-    if (record && Array.isArray(record.values)) {
-      const entry: FetchedVector = { id: key, values: record.values };
-      if (record.metadata !== undefined) {
-        entry.metadata = record.metadata;
+
+  // Split IDs into batches to avoid URL length limits
+  for (let i = 0; i < ids.length; i += FETCH_BATCH_SIZE) {
+    const batchIds = ids.slice(i, i + FETCH_BATCH_SIZE);
+    const fetchArgs = options?.namespace ? { ids: batchIds, namespace: options.namespace } : batchIds;
+
+    const response = await withRetry(() =>
+      index.fetch(fetchArgs as Parameters<Index<VectorMetadata>['fetch']>[0])
+    ).catch((error) => {
+      if (error instanceof AppError) {
+        throw error;
       }
-      result[key] = entry;
+      throw new AppError({
+        code: 'PINECONE_FETCH_FAILURE',
+        statusCode: 502,
+        message: 'Failed to fetch vectors from Pinecone',
+        details: { message: (error as Error).message, ids: batchIds },
+      });
+    });
+
+    const records = response.records ?? {};
+    for (const [key, record] of Object.entries(records)) {
+      if (record && Array.isArray(record.values)) {
+        const entry: FetchedVector = { id: key, values: record.values };
+        if (record.metadata !== undefined) {
+          entry.metadata = record.metadata;
+        }
+        result[key] = entry;
+      }
     }
   }
+
   return result;
 }
 
