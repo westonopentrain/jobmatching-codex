@@ -157,6 +157,7 @@ export async function getActiveJobs(): Promise<Array<{ id: string; title: string
     const jobs = await db.job.findMany({
       where: { isActive: true },
       select: { id: true, title: true },
+      orderBy: { createdAt: 'desc' },
     });
     return jobs;
   } catch (error) {
