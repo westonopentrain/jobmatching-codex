@@ -9,6 +9,7 @@ import { logger } from '../utils/logger';
 import { ensureAuthorized } from '../utils/auth';
 import { requireEnv, getEnv } from '../utils/env';
 import { getQualificationSummary, getAllPendingNotifications, getActiveJobs, syncActiveJobsFromBubble } from '../services/qualifications';
+import { fetchActiveJobsFromBubble } from '../services/bubble';
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const serviceApiKey = requireEnv('SERVICE_API_KEY');
@@ -1504,5 +1505,63 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       total,
       last24Hours: last24h,
     };
+  });
+
+  // Sync active jobs from Bubble Data API
+  // This endpoint fetches active jobs directly from Bubble and updates our database
+  // Designed to be called by a Render Cron Job daily
+  fastify.post('/admin/sync-active-jobs-from-bubble', async (request, reply) => {
+    const startTime = Date.now();
+
+    try {
+      // Fetch active job IDs from Bubble
+      const activeJobIds = await fetchActiveJobsFromBubble();
+
+      if (activeJobIds.length === 0) {
+        logger.warn(
+          { event: 'admin.sync_from_bubble.no_jobs' },
+          'No active jobs returned from Bubble - check BUBBLE_API_KEY configuration'
+        );
+        return {
+          status: 'warning',
+          message: 'No active jobs returned from Bubble',
+          fetched: 0,
+        };
+      }
+
+      // Sync to our database
+      const result = await syncActiveJobsFromBubble(activeJobIds);
+
+      const elapsedMs = Date.now() - startTime;
+
+      logger.info(
+        {
+          event: 'admin.sync_from_bubble.complete',
+          fetched: activeJobIds.length,
+          ...result,
+          elapsedMs,
+        },
+        'Synced active jobs from Bubble'
+      );
+
+      return {
+        status: result.success ? 'ok' : 'error',
+        fetched_from_bubble: activeJobIds.length,
+        activated: result.activated,
+        deactivated: result.deactivated,
+        created: result.created,
+        unchanged: result.unchanged,
+        elapsed_ms: elapsedMs,
+      };
+    } catch (error) {
+      logger.error(
+        { event: 'admin.sync_from_bubble.error', error },
+        'Failed to sync active jobs from Bubble'
+      );
+      return reply.status(500).send({
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
   });
 };
