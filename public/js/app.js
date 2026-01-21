@@ -1988,6 +1988,7 @@ function switchTab(tabName) {
   else if (tabName === 'users') loadUsers();
   else if (tabName === 'pending') loadPendingNotifications();
   else if (tabName === 'failures') loadFailures();
+  else if (tabName === 'resume-parsing') loadResumeParseFailures();
   else if (tabName === 'notifications') loadNotifications();
   else if (tabName === 'sync') loadSyncHealth();
   else if (tabName === 'monitoring') loadMonitoring();
@@ -2677,6 +2678,113 @@ document.addEventListener('DOMContentLoaded', () => {
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => {
       loadFailures(failuresPage);
+    });
+  }
+});
+
+// ============================================
+// Resume Parse Failures
+// ============================================
+
+async function loadResumeParseFailures(userId = '') {
+  const loading = document.getElementById('parse-loading');
+  const tbody = document.querySelector('#parse-failures-table tbody');
+  loading.classList.remove('hidden');
+  tbody.innerHTML = '';
+
+  try {
+    // Load stats first
+    await loadResumeParseStats();
+
+    const endpoint = userId
+      ? `/admin/resume-parse-failures?userId=${encodeURIComponent(userId)}`
+      : '/admin/resume-parse-failures?limit=50';
+    const data = await apiFetch(endpoint);
+
+    loading.classList.add('hidden');
+
+    if (data.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#666;">No parse failures found</td></tr>';
+      return;
+    }
+
+    data.records.forEach(failure => {
+      const tr = document.createElement('tr');
+      const fileUrlDisplay = failure.fileUrl ? truncate(failure.fileUrl, 40) : '-';
+      const errorDisplay = truncate(failure.error, 60);
+      tr.innerHTML = `
+        <td><code>${escapeHtml(truncate(failure.userId, 20))}</code></td>
+        <td><small>${failure.fileUrl ? `<a href="${escapeHtml(failure.fileUrl)}" target="_blank">${escapeHtml(fileUrlDisplay)}</a>` : '-'}</small></td>
+        <td><span class="badge badge-error">${escapeHtml(errorDisplay)}</span></td>
+        <td>${formatDate(failure.createdAt)}</td>
+      `;
+      tr.addEventListener('click', () => showParseFailureDetail(failure));
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    loading.textContent = 'Error loading parse failures';
+    console.error('Failed to load parse failures:', err);
+  }
+}
+
+async function loadResumeParseStats() {
+  try {
+    const data = await apiFetch('/admin/resume-parse-stats');
+    document.getElementById('stat-parse-total').textContent = data.total || 0;
+    document.getElementById('stat-parse-24h').textContent = data.last24Hours || 0;
+  } catch (err) {
+    console.error('Failed to load resume parse stats:', err);
+  }
+}
+
+function showParseFailureDetail(failure) {
+  modalBody.innerHTML = `
+    <div class="detail-header">
+      <h2>Resume Parse Failure</h2>
+      <div class="meta">User ID: <code>${escapeHtml(failure.userId)}</code> | Time: ${formatDate(failure.createdAt)}</div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Error</h3>
+      <div class="capsule-text" style="background:#ffebee;color:#c62828;padding:16px;border-radius:8px;white-space:pre-wrap;">${escapeHtml(failure.error)}</div>
+    </div>
+
+    ${failure.fileUrl ? `
+      <div class="detail-section">
+        <h3>File URL</h3>
+        <div class="capsule-text" style="word-break:break-all;"><a href="${escapeHtml(failure.fileUrl)}" target="_blank">${escapeHtml(failure.fileUrl)}</a></div>
+      </div>
+    ` : ''}
+  `;
+  modal.classList.remove('hidden');
+}
+
+// Initialize resume parse tab event listeners
+document.addEventListener('DOMContentLoaded', () => {
+  const searchBtn = document.getElementById('parse-search-btn');
+  const clearBtn = document.getElementById('parse-clear-btn');
+  const searchInput = document.getElementById('parse-search');
+
+  if (searchBtn) {
+    searchBtn.addEventListener('click', () => {
+      const userId = searchInput.value.trim();
+      loadResumeParseFailures(userId);
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      loadResumeParseFailures();
+    });
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        const userId = searchInput.value.trim();
+        loadResumeParseFailures(userId);
+      }
     });
   }
 });
