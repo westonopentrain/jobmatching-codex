@@ -15,45 +15,131 @@ export function buildServer() {
     logger: loggerOptions,
   });
 
-  // Custom JSON parser that sanitizes curly quotes and repairs malformed JSON
-  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
-    try {
-      // Sanitize curly/smart quotes from Bubble before parsing
-      // Bubble wraps values in curly quotes like: "title": ""value""
-      // We need to REMOVE these curly quotes, not replace them with straight quotes
-      let sanitized = body as string;
-      sanitized = sanitized.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, ''); // remove curly double quotes
-      sanitized = sanitized.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, ''); // remove curly single quotes
+  // Sanitize JSON string from Bubble - handles curly quotes and control characters
+  function sanitizeJsonString(raw: string): string {
+    let s = raw;
+    // Remove curly/smart quotes
+    s = s.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, ''); // curly double quotes
+    s = s.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, ''); // curly single quotes
+    // Remove other problematic unicode characters
+    s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ''); // control chars except \t \n \r
+    return s;
+  }
 
+  // Custom JSON parser that sanitizes and repairs malformed JSON from Bubble
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    const rawBody = body as string;
+
+    try {
+      // First attempt: sanitize and parse directly
+      const sanitized = sanitizeJsonString(rawBody);
       const json = JSON.parse(sanitized);
       done(null, json);
     } catch (err) {
-      // Try to repair malformed JSON (e.g., unescaped quotes in strings from Bubble)
+      // Second attempt: use jsonrepair for structural issues (unescaped quotes, etc.)
       try {
-        const sanitized = (body as string)
-          .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '')
-          .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, '');
+        const sanitized = sanitizeJsonString(rawBody);
         const repaired = jsonrepair(sanitized);
         const json = JSON.parse(repaired);
         req.log.info(
           {
             event: 'json.repair.success',
-            originalLength: typeof body === 'string' ? body.length : 0,
+            originalLength: rawBody.length,
           },
           'Successfully repaired malformed JSON'
         );
         done(null, json);
       } catch (repairErr) {
-        // Log the raw body for debugging
-        req.log.error(
-          {
-            event: 'json.parse.error',
-            rawBody: typeof body === 'string' ? body.substring(0, 2000) : 'not-a-string',
-            bodyLength: typeof body === 'string' ? body.length : 0,
-          },
-          'Failed to parse JSON body - raw content logged'
-        );
-        done(err as Error, undefined);
+        // Third attempt: aggressive repair - try to extract and fix the JSON structure
+        try {
+          // Sometimes the body has trailing garbage or is truncated
+          // Try to find a valid JSON object by balancing braces
+          let sanitized = sanitizeJsonString(rawBody);
+
+          // If the JSON ends abruptly mid-string, try to close it properly
+          // Count open braces and brackets
+          let braceCount = 0;
+          let bracketCount = 0;
+          let inString = false;
+          let escaped = false;
+
+          for (let i = 0; i < sanitized.length; i++) {
+            const char = sanitized[i];
+            if (escaped) {
+              escaped = false;
+              continue;
+            }
+            if (char === '\\') {
+              escaped = true;
+              continue;
+            }
+            if (char === '"') {
+              inString = !inString;
+              continue;
+            }
+            if (!inString) {
+              if (char === '{') braceCount++;
+              else if (char === '}') braceCount--;
+              else if (char === '[') bracketCount++;
+              else if (char === ']') bracketCount--;
+            }
+          }
+
+          // If we're in a string and have unclosed braces, try to close them
+          if (inString || braceCount > 0 || bracketCount > 0) {
+            // Close any open string
+            if (inString) sanitized += '"';
+            // Close brackets and braces
+            while (bracketCount > 0) {
+              sanitized += ']';
+              bracketCount--;
+            }
+            while (braceCount > 0) {
+              sanitized += '}';
+              braceCount--;
+            }
+
+            const repaired = jsonrepair(sanitized);
+            const json = JSON.parse(repaired);
+            req.log.info(
+              {
+                event: 'json.repair.truncated',
+                originalLength: rawBody.length,
+                addedClosing: true,
+              },
+              'Repaired truncated JSON by adding closing delimiters'
+            );
+            done(null, json);
+            return;
+          }
+
+          // If we get here, try one more repair attempt
+          const repaired = jsonrepair(sanitized);
+          const json = JSON.parse(repaired);
+          req.log.info(
+            {
+              event: 'json.repair.success',
+              originalLength: rawBody.length,
+            },
+            'Successfully repaired malformed JSON on third attempt'
+          );
+          done(null, json);
+        } catch (finalErr) {
+          // All attempts failed - log detailed error for debugging
+          req.log.error(
+            {
+              event: 'json.parse.error',
+              rawBody: rawBody.substring(0, 3000),
+              rawBodyEnd: rawBody.length > 3000 ? rawBody.substring(rawBody.length - 500) : undefined,
+              bodyLength: rawBody.length,
+              parseError: (err as Error).message,
+              repairError: (repairErr as Error).message,
+              finalError: (finalErr as Error).message,
+            },
+            'Failed to parse JSON body after all repair attempts'
+          );
+          done(err as Error, undefined);
+        }
       }
     }
   });
