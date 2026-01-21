@@ -44,3 +44,19 @@ services:
 
       - key: SLACK_WEBHOOK_URL
         sync: false
+
+      - key: BUBBLE_API_KEY
+        sync: false
+      - key: BUBBLE_API_URL
+        sync: false
+
+  - type: cron
+    name: sync-active-jobs-daily
+    schedule: "0 6 * * *"
+    env: node
+    buildCommand: echo "no build needed"
+    startCommand: |
+      curl -X POST https://user-capsule-upsert-service.onrender.com/admin/sync-active-jobs-from-bubble -H "Authorization: Bearer $SERVICE_API_KEY"
+    envVars:
+      - key: SERVICE_API_KEY
+        sync: false
