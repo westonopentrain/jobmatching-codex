@@ -878,21 +878,29 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         const jobLanguages = (jobMetadata?.languages as string[] | undefined) ?? [];
 
         // Country filter: if job has country requirements, user must be in one of them
+        // Handle "Global - Any Location" specially - matches all users
         if (jobCountries.length > 0) {
-          if (!userCountry) {
-            // Job requires specific countries but user has no country set - skip
-            skippedByCountry++;
-            continue;
-          }
-          const userCountryLower = userCountry.toLowerCase();
-          const matchesCountry = jobCountries.some(
-            (c) => c.toLowerCase() === userCountryLower
+          const hasGlobal = jobCountries.some(
+            (c) => c.toLowerCase() === 'global' || c === 'Global - Any Location'
           );
-          if (!matchesCountry) {
-            // User's country doesn't match job's requirements - skip
-            skippedByCountry++;
-            continue;
+          if (!hasGlobal) {
+            // Only apply country filter for non-global jobs
+            if (!userCountry) {
+              // Job requires specific countries but user has no country set - skip
+              skippedByCountry++;
+              continue;
+            }
+            const userCountryLower = userCountry.toLowerCase();
+            const matchesCountry = jobCountries.some(
+              (c) => c.toLowerCase() === userCountryLower
+            );
+            if (!matchesCountry) {
+              // User's country doesn't match job's requirements - skip
+              skippedByCountry++;
+              continue;
+            }
           }
+          // If hasGlobal, skip country filtering - job accepts all locations
         }
 
         // Language filter: if job has language requirements, user must speak at least one
