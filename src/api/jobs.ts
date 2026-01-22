@@ -456,8 +456,8 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         subject_matter_strictness: classification.requirements.subjectMatterStrictness,
         required_experience_years: classification.requirements.minimumExperienceYears,
         expertise_tier: classification.requirements.expertiseTier,
-        countries: classification.requirements.countries,
-        languages: classification.requirements.languages,
+        countries: normalized.availableCountries,
+        languages: normalized.availableLanguages,
       };
 
       await Promise.all([
