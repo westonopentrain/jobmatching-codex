@@ -169,6 +169,8 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
       // Build enriched metadata for Pinecone filtering
       // This enables smart matching: specialized jobs filter by credentials,
       // generic jobs exclude overqualified domain experts
+      // IMPORTANT: Use original country/language values from Bubble (not LLM-generated ISO codes)
+      // to match user metadata format for proper Pinecone filtering
       const jobMetadata = {
         job_id: normalized.jobId,
         model: EMBEDDING_MODEL,
@@ -180,8 +182,8 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         subject_matter_strictness: classification.requirements.subjectMatterStrictness,
         required_experience_years: classification.requirements.minimumExperienceYears,
         expertise_tier: classification.requirements.expertiseTier,
-        countries: classification.requirements.countries,
-        languages: classification.requirements.languages,
+        countries: normalized.availableCountries,
+        languages: normalized.availableLanguages,
       };
 
       await upsertVector(domainVectorId, domainEmbedding, {
