@@ -46,8 +46,8 @@ export async function getSpecialtyEmbedding(code: string): Promise<number[]> {
     return embeddingCache.get(specialty)!;
   }
 
-  // Embed with context for better semantic understanding
-  const embedding = await embedText(`subject matter expertise: ${specialty}`);
+  // Embed the raw specialty for proper semantic differentiation
+  const embedding = await embedText(specialty);
   embeddingCache.set(specialty, embedding);
   return embedding;
 }

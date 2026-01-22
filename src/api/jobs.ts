@@ -696,6 +696,39 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
+      // Step 6: Credential filtering for jobs requiring specific credentials (e.g., MD, RN)
+      const requiredCredentials = classification.requirements.credentials ?? [];
+      const credentialFilteredUserIds = new Set<string>();
+
+      if (requiredCredentials.length > 0 && qualifiedUsers.length > 0) {
+        const beforeFilter = qualifiedUsers.length;
+
+        qualifiedUsers = qualifiedUsers.filter((u) => {
+          const metadata = userMetadataMap.get(u.userId) as Record<string, unknown> | undefined;
+          const userCreds = (metadata?.credentials as string[]) ?? [];
+          const normalizedUserCreds = userCreds.map(c => c.toLowerCase().replace(/[.\s-]/g, ''));
+
+          const hasRequired = requiredCredentials.some(req => {
+            const normalizedReq = req.toLowerCase().replace(/[.\s-]/g, '');
+            return normalizedUserCreds.some(uc =>
+              uc.includes(normalizedReq) || normalizedReq.includes(uc)
+            );
+          });
+
+          if (!hasRequired) credentialFilteredUserIds.add(u.userId);
+          return hasRequired;
+        });
+
+        log.info({
+          event: 'notify.credential_filter',
+          jobId: job_id,
+          requiredCredentials,
+          beforeFilter,
+          afterFilter: qualifiedUsers.length,
+          filteredOut: beforeFilter - qualifiedUsers.length,
+        }, 'Credential filtering complete');
+      }
+
       // Apply safety cap
       const notifyUsers = qualifiedUsers.slice(0, max_notifications);
 
@@ -725,6 +758,9 @@ export const jobRoutes: FastifyPluginAsync = async (fastify) => {
             // Fallback
             filterReason = `missing_subject_matter (${jobSubjectMatterCodes.join(', ')})`;
           }
+        } else if (credentialFilteredUserIds.has(u.userId)) {
+          const userCreds = (metadata?.credentials as string[]) ?? [];
+          filterReason = `missing_credential (required: ${requiredCredentials.join(', ')}, has: ${userCreds.join(', ') || 'none'})`;
         } else if (!notifiedUserIds.has(u.userId)) {
           filterReason = 'max_cap';
         }

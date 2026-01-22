@@ -477,9 +477,9 @@ export async function getQualificationSummary(): Promise<{
   try {
     const [activeJobs, totalQualifications, pendingNotifications, notifiedToday] = await Promise.all([
       db.job.count({ where: { isActive: true } }),
-      db.jobUserQualification.count({ where: { qualifies: true } }),
+      db.jobUserQualification.count({ where: { qualifies: true, jobActive: true } }),
       db.jobUserQualification.count({ where: { qualifies: true, notifiedAt: null, jobActive: true } }),
-      db.jobUserQualification.count({ where: { notifiedAt: { gte: today } } }),
+      db.jobUserQualification.count({ where: { notifiedAt: { gte: today }, qualifies: true, jobActive: true } }),
     ]);
 
     return { activeJobs, totalQualifications, pendingNotifications, notifiedToday };
