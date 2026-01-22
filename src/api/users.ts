@@ -12,7 +12,7 @@ import { upsertVector, deleteVectors, updateVectorMetadata, VectorMetadata, fetc
 import { requireEnv, getEnv } from '../utils/env';
 import { auditUserUpsert, auditUserMetadataUpdate, auditRecommendedJobs, auditUpsertFailure } from '../services/audit';
 import { getDb, isDatabaseAvailable } from '../services/db';
-import { getUserQualifications, getActiveJobs, storeUserQualificationsForJobs } from '../services/qualifications';
+import { getUserQualifications, getActiveJobs } from '../services/qualifications';
 import { getWeightProfile, JobClass } from '../services/job-classifier';
 import { logger } from '../utils/logger';
 
@@ -218,12 +218,11 @@ async function evaluateUserAgainstActiveJobs(
       }
     }
 
-    // Store results
+    // Log evaluation results (no longer stored - qualifications only tracked when jobs trigger notify)
     if (results.length > 0) {
-      const { stored, errors } = await storeUserQualificationsForJobs(userId, results);
       logger.info(
-        { event: 'user.evaluate.complete', userId, evaluated: results.length, stored, errors },
-        'Completed async evaluation of user against active jobs'
+        { event: 'user.evaluate.complete', userId, evaluated: results.length, qualified: results.filter(r => r.qualifies).length },
+        'Completed async evaluation of user against active jobs (results not stored)'
       );
     }
   } catch (error) {
