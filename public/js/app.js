@@ -2146,10 +2146,17 @@ async function loadSyncHealth() {
   }
 }
 
+// Overview tab state
+let allActiveJobs = [];
+let filteredActiveJobs = [];
+let activeJobsPage = 0;
+const ACTIVE_JOBS_PER_PAGE = 20;
+
 // Load Overview tab data
 async function loadOverview() {
   const loading = document.getElementById('overview-loading');
   const tbody = document.querySelector('#active-jobs-table tbody');
+  const countSpan = document.getElementById('active-jobs-count');
 
   loading.classList.remove('hidden');
   tbody.innerHTML = '';
@@ -2160,55 +2167,188 @@ async function loadOverview() {
       apiFetch('/admin/jobs/active'),
     ]);
 
-    loading.classList.add('hidden');
-
     // Update overview stats
     document.getElementById('overview-active-jobs').textContent = summary.activeJobs || 0;
     document.getElementById('overview-pending').textContent = summary.pendingNotifications || 0;
     document.getElementById('overview-qualified').textContent = summary.totalQualifications || 0;
     document.getElementById('overview-notified-today').textContent = summary.notifiedToday || 0;
 
-    // Populate active jobs table
     if (activeJobs.jobs.length === 0) {
+      loading.classList.add('hidden');
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No active jobs</td></tr>';
       return;
     }
 
-    // Fetch qualification counts for each active job
-    const jobsWithCounts = await Promise.all(
-      activeJobs.jobs.slice(0, 20).map(async (job) => {
-        try {
-          const quals = await apiFetch(`/admin/jobs/${encodeURIComponent(job.job_id)}/qualifications?qualifies_only=true&limit=1`);
-          const pending = await apiFetch(`/v1/jobs/${encodeURIComponent(job.job_id)}/pending-notifications?limit=1`);
-          return {
-            ...job,
-            qualified: quals.total || 0,
-            pending: pending.total || 0,
-            notified: (quals.total || 0) - (pending.total || 0),
-          };
-        } catch {
-          return { ...job, qualified: 0, pending: 0, notified: 0 };
-        }
-      })
-    );
+    // Store all jobs for filtering
+    allActiveJobs = activeJobs.jobs.map(job => ({
+      ...job,
+      qualified: null,
+      pending: null,
+      notified: null,
+    }));
+    filteredActiveJobs = [...allActiveJobs];
+    activeJobsPage = 0;
 
-    jobsWithCounts.forEach(job => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${escapeHtml(job.title || 'Untitled')}</td>
-        <td><code>${escapeHtml(truncate(job.job_id, 20))}</code></td>
-        <td>${job.qualified}</td>
-        <td class="${job.pending > 0 ? 'pending-highlight' : ''}">${job.pending}</td>
-        <td>${job.notified}</td>
-      `;
-      tr.addEventListener('click', () => showJobQualifications(job.job_id));
-      tbody.appendChild(tr);
-    });
+    // Render initial page without counts (faster)
+    renderActiveJobsPage();
+    loading.classList.add('hidden');
+
+    // Fetch counts in background for visible jobs
+    await fetchActiveJobCounts();
+
   } catch (err) {
-    loading.textContent = 'Error loading overview';
+    loading.classList.add('hidden');
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#c00;">Error loading overview</td></tr>';
     console.error('Failed to load overview:', err);
   }
 }
+
+// Fetch qualification counts for current page of jobs
+async function fetchActiveJobCounts() {
+  const startIdx = activeJobsPage * ACTIVE_JOBS_PER_PAGE;
+  const pageJobs = filteredActiveJobs.slice(startIdx, startIdx + ACTIVE_JOBS_PER_PAGE);
+
+  // Fetch counts in parallel batches of 5 to avoid overwhelming server
+  const batchSize = 5;
+  for (let i = 0; i < pageJobs.length; i += batchSize) {
+    const batch = pageJobs.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (job) => {
+      if (job.qualified !== null) return; // Already fetched
+      try {
+        const quals = await apiFetch(`/admin/jobs/${encodeURIComponent(job.job_id)}/qualifications?qualifies_only=true&limit=1`);
+        const pending = await apiFetch(`/v1/jobs/${encodeURIComponent(job.job_id)}/pending-notifications?limit=1`);
+        job.qualified = quals.total || 0;
+        job.pending = pending.total || 0;
+        job.notified = (quals.total || 0) - (pending.total || 0);
+
+        // Update the row if still visible
+        updateActiveJobRow(job);
+      } catch {
+        job.qualified = 0;
+        job.pending = 0;
+        job.notified = 0;
+        updateActiveJobRow(job);
+      }
+    }));
+  }
+}
+
+// Update a single job row in the table
+function updateActiveJobRow(job) {
+  const row = document.querySelector(`#active-jobs-table tr[data-job-id="${job.job_id}"]`);
+  if (!row) return;
+
+  row.querySelector('.col-qualified').textContent = job.qualified ?? '-';
+  const pendingCell = row.querySelector('.col-pending');
+  pendingCell.textContent = job.pending ?? '-';
+  pendingCell.className = 'col-pending' + (job.pending > 0 ? ' pending-highlight' : '');
+  row.querySelector('.col-notified').textContent = job.notified ?? '-';
+}
+
+// Render current page of active jobs
+function renderActiveJobsPage() {
+  const tbody = document.querySelector('#active-jobs-table tbody');
+  const countSpan = document.getElementById('active-jobs-count');
+  const pagination = document.getElementById('active-jobs-pagination');
+
+  const startIdx = activeJobsPage * ACTIVE_JOBS_PER_PAGE;
+  const pageJobs = filteredActiveJobs.slice(startIdx, startIdx + ACTIVE_JOBS_PER_PAGE);
+  const totalPages = Math.ceil(filteredActiveJobs.length / ACTIVE_JOBS_PER_PAGE);
+
+  // Update count
+  countSpan.textContent = `Showing ${startIdx + 1}-${Math.min(startIdx + ACTIVE_JOBS_PER_PAGE, filteredActiveJobs.length)} of ${filteredActiveJobs.length}`;
+
+  tbody.innerHTML = '';
+
+  if (pageJobs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No jobs match your search</td></tr>';
+    pagination.innerHTML = '';
+    return;
+  }
+
+  pageJobs.forEach(job => {
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-job-id', job.job_id);
+    tr.innerHTML = `
+      <td>${escapeHtml(job.title || 'Untitled')}</td>
+      <td><code>${escapeHtml(truncate(job.job_id, 20))}</code></td>
+      <td class="col-qualified">${job.qualified ?? '-'}</td>
+      <td class="col-pending ${job.pending > 0 ? 'pending-highlight' : ''}">${job.pending ?? '-'}</td>
+      <td class="col-notified">${job.notified ?? '-'}</td>
+    `;
+    tr.addEventListener('click', () => showJobQualifications(job.job_id));
+    tbody.appendChild(tr);
+  });
+
+  // Render pagination
+  if (totalPages > 1) {
+    let paginationHtml = '';
+    if (activeJobsPage > 0) {
+      paginationHtml += `<button onclick="goToActiveJobsPage(${activeJobsPage - 1})">« Prev</button>`;
+    }
+    paginationHtml += `<span style="margin: 0 12px;">Page ${activeJobsPage + 1} of ${totalPages}</span>`;
+    if (activeJobsPage < totalPages - 1) {
+      paginationHtml += `<button onclick="goToActiveJobsPage(${activeJobsPage + 1})">Next »</button>`;
+    }
+    pagination.innerHTML = paginationHtml;
+  } else {
+    pagination.innerHTML = '';
+  }
+}
+
+// Navigate to a specific page
+function goToActiveJobsPage(page) {
+  activeJobsPage = page;
+  renderActiveJobsPage();
+  fetchActiveJobCounts();
+}
+
+// Filter active jobs by search term
+function filterActiveJobs(searchTerm) {
+  const term = searchTerm.toLowerCase().trim();
+  if (!term) {
+    filteredActiveJobs = [...allActiveJobs];
+  } else {
+    filteredActiveJobs = allActiveJobs.filter(job =>
+      (job.title && job.title.toLowerCase().includes(term)) ||
+      (job.job_id && job.job_id.toLowerCase().includes(term))
+    );
+  }
+  activeJobsPage = 0;
+  renderActiveJobsPage();
+  fetchActiveJobCounts();
+}
+
+// Setup active jobs search handlers
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('active-job-search');
+  const clearBtn = document.getElementById('active-job-clear-btn');
+
+  if (searchInput) {
+    // Search on Enter key
+    searchInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        filterActiveJobs(searchInput.value);
+      }
+    });
+
+    // Live search with debounce
+    let searchTimeout;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        filterActiveJobs(searchInput.value);
+      }, 300);
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (searchInput) searchInput.value = '';
+      filterActiveJobs('');
+    });
+  }
+});
 
 // Load pending notifications
 async function loadPendingNotifications() {

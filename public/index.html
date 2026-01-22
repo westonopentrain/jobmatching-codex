@@ -100,6 +100,11 @@
           </div>
           <div class="overview-section">
             <h3>Active Jobs</h3>
+            <div class="toolbar">
+              <input type="text" id="active-job-search" placeholder="Search jobs by title...">
+              <button id="active-job-clear-btn">Clear</button>
+              <span class="toolbar-info" id="active-jobs-count"></span>
+            </div>
             <table id="active-jobs-table">
               <thead>
                 <tr>
@@ -112,6 +117,7 @@
               </thead>
               <tbody></tbody>
             </table>
+            <div class="pagination" id="active-jobs-pagination"></div>
           </div>
         </div>
         <div class="loading" id="overview-loading">Loading...</div>

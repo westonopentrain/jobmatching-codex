@@ -1564,4 +1564,50 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   });
+
+  // Clear all qualification data (reset dashboard stats)
+  fastify.delete('/admin/qualifications/clear', async (request, reply) => {
+    const db = getDb();
+    if (!db) return reply.status(503).send({ error: 'Database not available' });
+
+    const { confirm } = request.query as { confirm?: string };
+
+    if (confirm !== 'yes') {
+      return reply.status(400).send({
+        error: 'Safety check failed',
+        message: 'Add ?confirm=yes to confirm deletion of all qualification data',
+      });
+    }
+
+    try {
+      const countBefore = await db.jobUserQualification.count();
+
+      // Delete all qualification records
+      const result = await db.jobUserQualification.deleteMany({});
+
+      logger.warn(
+        {
+          event: 'admin.qualifications.clear',
+          deletedCount: result.count,
+          countBefore,
+        },
+        'All qualification data cleared by admin'
+      );
+
+      return {
+        status: 'ok',
+        deleted: result.count,
+        message: 'All qualification data has been cleared. New qualifications will be created as jobs are processed.',
+      };
+    } catch (error) {
+      logger.error(
+        { event: 'admin.qualifications.clear.error', error },
+        'Failed to clear qualification data'
+      );
+      return reply.status(500).send({
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
 };
