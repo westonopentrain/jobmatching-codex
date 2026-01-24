@@ -107,9 +107,9 @@ function getBaseMinThreshold(jobClass: JobClass): number {
 }
 
 // Thresholds for recommended-jobs endpoint
-// Lower than notify thresholds since showing a list is less intrusive than sending emails
-const RECOMMENDED_MIN_SPECIALIZED = 0.30;
-const RECOMMENDED_MIN_GENERIC = 0.20;
+// Slightly below notify thresholds (0.35/0.25) - curated but more inclusive than email
+const RECOMMENDED_MIN_SPECIALIZED = 0.33;
+const RECOMMENDED_MIN_GENERIC = 0.23;
 
 function getTierAdjustedMinThreshold(
   userTier: string | undefined,
