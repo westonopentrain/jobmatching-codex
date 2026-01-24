@@ -3,6 +3,7 @@ import { getEnv, requireEnv } from '../utils/env';
 import { withRetry } from '../utils/retry';
 import { AppError } from '../utils/errors';
 import { logger } from '../utils/logger';
+import { getLanguageFilterForPinecone } from '../utils/language-matching';
 
 export type VectorMetadata = RecordMetadata;
 
@@ -229,19 +230,9 @@ export async function queryUsersByFilter(options: UserFilterOptions): Promise<Fi
     // If hasGlobal, don't add country filter - accept all countries
   }
 
-  // Language filter: require ALL specified languages (AND logic)
-  // When a job requires ["Slovak", "English"], user must speak BOTH languages
+  // Language filter: exclude English (communication default), require work language match
   if (languages && languages.length > 0) {
-    if (languages.length === 1) {
-      // Single language: simple containment check
-      filter.languages = { $in: languages };
-    } else {
-      // Multiple languages: require ALL of them using $and
-      // Each condition checks that the user's languages array contains this language
-      filter.$and = languages.map(lang => ({
-        languages: { $in: [lang] }
-      }));
-    }
+    filter.languages = { $in: getLanguageFilterForPinecone(languages) };
   }
 
   const queryRequest: Record<string, unknown> = {

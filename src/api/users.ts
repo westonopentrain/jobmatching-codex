@@ -15,6 +15,7 @@ import { getDb, isDatabaseAvailable } from '../services/db';
 import { getUserQualifications, getActiveJobs } from '../services/qualifications';
 import { getWeightProfile, JobClass } from '../services/job-classifier';
 import { logger } from '../utils/logger';
+import { matchesJobLanguages } from '../utils/language-matching';
 
 const requestSchema = z.object({
   user_id: z.string().min(1),
@@ -890,22 +891,10 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           // If hasGlobal, skip country filtering - job accepts all locations
         }
 
-        // Language filter: if job has language requirements, user must speak at least one
-        if (jobLanguages.length > 0) {
-          if (userLanguages.length === 0) {
-            // Job requires specific languages but user has none set - skip
-            skippedByLanguage++;
-            continue;
-          }
-          const userLanguagesLower = new Set(userLanguages.map((l) => l.toLowerCase()));
-          const matchesLanguage = jobLanguages.some(
-            (l) => userLanguagesLower.has(l.toLowerCase())
-          );
-          if (!matchesLanguage) {
-            // User doesn't speak any of the job's required languages - skip
-            skippedByLanguage++;
-            continue;
-          }
+        // Language filter: exclude English (communication default), require work language match
+        if (!matchesJobLanguages(jobLanguages, userLanguages)) {
+          skippedByLanguage++;
+          continue;
         }
 
         // Calculate cosine similarity scores
