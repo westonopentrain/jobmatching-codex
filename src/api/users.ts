@@ -106,29 +106,17 @@ function getBaseMinThreshold(jobClass: JobClass): number {
   return jobClass === 'specialized' ? MIN_THRESHOLD_SPECIALIZED : MIN_THRESHOLD_GENERIC;
 }
 
-// Tier-adjusted thresholds for recommended-jobs endpoint (matching score_jobs_for_user)
-// These are stricter to ensure high-quality recommendations
-const RECOMMENDED_MIN_SPECIALIZED = 0.50; // 50% for specialized jobs
-const RECOMMENDED_MIN_GENERIC = 0.35; // 35% for generic jobs
-
-// Tier-based threshold multipliers for generic jobs
-// Specialists need higher scores to match generic jobs (they should focus on specialized work)
-const TIER_THRESHOLD_MULTIPLIERS: Record<string, number> = {
-  'specialist': 1.3, // 45% for generic (35% * 1.3)
-  'expert': 1.15, // ~40% for generic
-  'intermediate': 1.0,
-  'entry': 1.0,
-};
+// Thresholds for recommended-jobs endpoint
+// Lower than notify thresholds since showing a list is less intrusive than sending emails
+const RECOMMENDED_MIN_SPECIALIZED = 0.30;
+const RECOMMENDED_MIN_GENERIC = 0.20;
 
 function getTierAdjustedMinThreshold(
   userTier: string | undefined,
   jobClass: JobClass
 ): number {
-  const baseMin = jobClass === 'specialized' ? RECOMMENDED_MIN_SPECIALIZED : RECOMMENDED_MIN_GENERIC;
-  const multiplier = TIER_THRESHOLD_MULTIPLIERS[userTier ?? 'entry'] ?? 1.0;
-
-  // Only apply multiplier to generic jobs - specialists shouldn't see irrelevant generic jobs
-  return jobClass === 'generic' ? baseMin * multiplier : baseMin;
+  // Tier multipliers removed - expertise captured in similarity scores
+  return jobClass === 'specialized' ? RECOMMENDED_MIN_SPECIALIZED : RECOMMENDED_MIN_GENERIC;
 }
 
 /**
